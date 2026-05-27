@@ -95,22 +95,41 @@
     const RAMP = "@#&%$BMW8*okbdpqwOC0LXzxnuvjftlI:. ";
 
     // -------------------------------------------------------------------------
+    // Tween library
+    // -------------------------------------------------------------------------
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const easeInCubic    = t => t * t * t;
+    const easeOutCubic   = t => 1 - Math.pow(1 - t, 3);
+    const easeInOutCubic = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const easeInQuad     = t => t * t;
+    const easeOutBack    = t => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2);
+
+    function applyEase(name, t) {
+      switch (name) {
+        case "easeInCubic":    return easeInCubic(t);
+        case "easeOutCubic":   return easeOutCubic(t);
+        case "easeInOutCubic": return easeInOutCubic(t);
+        case "easeInQuad":     return easeInQuad(t);
+        case "easeOutBack":    return easeOutBack(t);
+        default:               return t; // linear
+      }
+    }
+
+    // -------------------------------------------------------------------------
     // Sphere renderer — pre-baked, called once on load
     // renderDeathStar(radius, lightDir, includeDish, dishOffset)
     // Returns: 2D char array with .dishCol and .dishRow properties
     // -------------------------------------------------------------------------
     function renderDeathStar(radius, lightDir, includeDish, dishOffset) {
       const Lx = lightDir.x, Ly = lightDir.y, Lz = lightDir.z;
-      // Normalize light dir
-      const lLen = Math.sqrt(Lx*Lx + Ly*Ly + Lz*Lz);
-      const lx = Lx/lLen, ly = Ly/lLen, lz = Lz/lLen;
+      const lLen = Math.sqrt(Lx * Lx + Ly * Ly + Lz * Lz);
+      const lx = Lx / lLen, ly = Ly / lLen, lz = Lz / lLen;
 
       const cols = 2 * radius + 3;
       const rows = radius + 2;
       const cx = cols / 2 - 0.5;
       const cy = rows / 2 - 0.5;
 
-      // Build 2D char array
       const sprite = [];
       for (let r = 0; r < rows; r++) {
         sprite.push(new Array(cols).fill(" "));
@@ -118,53 +137,41 @@
 
       let dishCol = -1, dishRow = -1;
       if (includeDish && dishOffset) {
-        // Compute dish center in pixel coords
         dishCol = Math.round(cx + dishOffset.dx * radius);
         dishRow = Math.round(cy + dishOffset.dy * (radius / 2));
       }
 
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-          // Aspect-corrected normalized coords
           const nx = (c - cx) / radius;
           const ny = (r - cy) / (radius / 2.0);
 
           const d2 = nx * nx + ny * ny;
-          if (d2 > 1.0) continue; // outside sphere
+          if (d2 > 1.0) continue;
 
           const nz = Math.sqrt(1.0 - d2);
 
-          // Lambertian shading
           let b = Math.max(0, nx * lx + ny * ly + nz * lz);
-
-          // Gamma lift (soften harsh highlights)
           b = Math.pow(b, 0.85);
-
-          // Deterministic dither (tiny amount for texture)
           b += (hashFn(c + radius * 100, r + radius * 100) - 0.5) * 0.04;
           b = Math.max(0, Math.min(1, b));
 
-          // Equatorial trench: darken cells near ny ≈ 0
           const halfRow = 0.5 / radius;
           if (Math.abs(ny) < halfRow) {
             b = Math.max(0, b - 0.12);
           }
 
-          // Map to ramp: inverted — dark areas → dark chars (front of ramp)
           let idx = Math.floor((1.0 - b) * (RAMP.length - 1));
           idx = Math.max(0, Math.min(RAMP.length - 1, idx));
 
-          // Dish carving (LARGE only)
           if (includeDish && dishOffset) {
             const distToDish = Math.sqrt((c - dishCol) * (c - dishCol) + (r - dishRow) * (r - dishRow));
             const dishR = radius * 0.28;
             const rimOuter = radius * 0.32;
             if (distToDish < dishR) {
-              // Interior of dish: force darkest glyph
-              idx = 0; // '@'
+              idx = 0;
             } else if (distToDish < rimOuter) {
-              // Dish rim: bright ring
-              idx = Math.round(RAMP.length * 0.55); // 'O'
+              idx = Math.round(RAMP.length * 0.55);
             }
           }
 
@@ -172,7 +179,6 @@
         }
       }
 
-      // Attach dish position as metadata
       sprite.dishCol = dishCol;
       sprite.dishRow = dishRow;
 
@@ -181,23 +187,29 @@
 
     // -------------------------------------------------------------------------
     // Pre-bake all DS sizes on load (not per-frame)
+    // DS_SPRITES[0] = DS_TINY, DS_SPRITES[1..18] = baked radii
     // -------------------------------------------------------------------------
     const LIGHT_DIR = { x: -0.55, y: -0.35, z: 0.75 };
     const DISH_OFFSET = { dx: 0.45, dy: -0.45 };
 
-    // DS_TINY: single dot
     const DS_TINY = [["."]];
     DS_TINY.dishCol = 0;
     DS_TINY.dishRow = 0;
 
-    // DS_SMALL: radius=4
-    const DS_SMALL = renderDeathStar(4, LIGHT_DIR, false, null);
+    // Build sprite array indexed by radius (0 = tiny, 1-18 = rendered)
+    const DS_SPRITES = [DS_TINY];
+    for (let r = 1; r <= 18; r++) {
+      const includeDish = (r === 18);
+      const offset = (r === 18) ? DISH_OFFSET : null;
+      DS_SPRITES.push(renderDeathStar(r, LIGHT_DIR, includeDish, offset));
+    }
 
-    // DS_MED: radius=10
-    const DS_MED = renderDeathStar(10, LIGHT_DIR, false, null);
+    // DS_LARGE is the radius-18 sprite
+    const DS_LARGE = DS_SPRITES[18];
 
-    // DS_LARGE: radius=18, with dish
-    const DS_LARGE = renderDeathStar(18, LIGHT_DIR, true, DISH_OFFSET);
+    function getDsSprite(radius) {
+      return DS_SPRITES[Math.max(0, Math.min(18, Math.round(radius)))];
+    }
 
     // DS_LARGE with dish glow variant — dish center replaced with glow char
     function dsLargeWithDishGlow(glowChar) {
@@ -236,7 +248,17 @@
     function copyGrid(g) { return g.map(row => row.slice()); }
 
     const BASE_STARFIELD = makeStarfield();
-    function starfieldCopy() { return copyGrid(BASE_STARFIELD); }
+
+    // Pre-extract star positions for per-frame twinkle (avoid full 5600-cell scan)
+    const STARS = [];
+    for (let r = 0; r < H; r++) {
+      for (let c = 0; c < W; c++) {
+        const ch = BASE_STARFIELD[r][c];
+        if (ch !== " ") {
+          STARS.push({ c, r, baseChar: ch, phase: hashFn(c, r) * Math.PI * 2 });
+        }
+      }
+    }
 
     function overlaySprite(grid, sprite, x0, y0) {
       for (let i = 0; i < sprite.length; i++) {
@@ -245,8 +267,8 @@
           const ch = row[j];
           if (ch === " ") continue;
           const r = y0 + i;
-          const c = x0 + j;
-          if (r >= 0 && r < H && c >= 0 && c < W) grid[r][c] = ch;
+          const cx = x0 + j;
+          if (r >= 0 && r < H && cx >= 0 && cx < W) grid[r][cx] = ch;
         }
       }
     }
@@ -255,14 +277,42 @@
       for (let i = 0; i < h; i++) {
         for (let j = 0; j < w; j++) {
           const r = y0 + i;
-          const c = x0 + j;
-          if (r >= 0 && r < H && c >= 0 && c < W) grid[r][c] = " ";
+          const cx = x0 + j;
+          if (r >= 0 && r < H && cx >= 0 && cx < W) grid[r][cx] = " ";
         }
       }
     }
 
     function gridToString(grid) {
       return grid.map(r => r.join("")).join("\n");
+    }
+
+    // -------------------------------------------------------------------------
+    // Star twinkle — paint only precomputed STARS array
+    // -------------------------------------------------------------------------
+    function paintStarfieldWithTwinkle(monoGrid, t) {
+      for (const star of STARS) {
+        const b = 0.5 + 0.5 * Math.sin(t * 0.7 + star.phase);
+        let ch = " ";
+        if (star.baseChar === "*") {
+          if (b > 0.55) ch = "*";
+          else if (b > 0.25) ch = ".";
+          else ch = " ";
+        } else {
+          // baseChar === "."
+          ch = (b > 0.4) ? "." : " ";
+        }
+        if (ch !== " ") monoGrid[star.r][star.c] = ch;
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // DS ambient drift
+    // -------------------------------------------------------------------------
+    function computeDrift(t) {
+      const driftX = Math.sin(t / 11 * 2 * Math.PI) * 1.5;
+      const driftY = Math.sin(t / 7 * 2 * Math.PI) * 1.0;
+      return { x: Math.round(driftX), y: Math.round(driftY) };
     }
 
     // -------------------------------------------------------------------------
@@ -292,11 +342,6 @@
       " /=/_\\=\\",
       "/__   __\\=",
     ];
-
-    // Engine glow positions within the XWING_LEVEL sprite (col offset, row offset)
-    // The trailing end of each X-Wing (rightmost non-space col of center row)
-    // We'll manually add engine glow on the yellow layer
-    const XWING_SPRITES = [XWING_LEVEL, XWING_BANK_UP, XWING_BANK_DOWN];
 
     // -------------------------------------------------------------------------
     // Explosion sprites
@@ -367,396 +412,494 @@
     }
 
     // -------------------------------------------------------------------------
-    // buildFrames — assembles all animation frames
+    // Dish ember — always-on faint red glow at dish position
     // -------------------------------------------------------------------------
-    function buildFrames() {
-      const frames = [];
+    function paintDishEmber(redGrid, t, dsState, drift) {
+      if (!dsState.visible || dsState.radius < 12) return;
 
-      // DS_LARGE occupies rows 0..(radius*1+2) and cols 0..(2*radius+2)
-      // radius=18 → cols=39, rows=20
-      // Place DS_LARGE left-third: dsX=8, dsY=10
-      const DS_X = 8;
-      const DS_Y = 10;
+      const emberLevel = 0.5 + 0.5 * Math.sin(t * 2.3) * Math.sin(t * 1.1);
+      const intensity = Math.max(emberLevel * 0.25, chargeProgress(t));
 
-      // Dish screen-space position from baked sprite metadata
-      const DISH_X = DS_X + DS_LARGE.dishCol;
-      const DISH_Y = DS_Y + DS_LARGE.dishRow;
+      if (intensity < 0.05) return;
 
-      // X-Wing rows — vertically spaced across the grid
-      const ROW_A = 10;
-      const ROW_B = 18;
-      const ROW_C = 28;
+      const EMBER_RAMP = [".", ",", ":", "o", "O", "@"];
+      const idx = Math.floor(intensity * 5.99);
+      const ch = EMBER_RAMP[Math.max(0, Math.min(5, idx))];
 
-      // Hold positions (where X-Wings settle before firing)
-      const HOLD_A = 80;
-      const HOLD_B = 84;
-      const HOLD_C = 78;
+      const sprite = getDsSprite(dsState.radius);
+      const dishX = dsState.x + drift.x + (sprite.dishCol >= 0 ? sprite.dishCol : 0);
+      const dishY = dsState.y + drift.y + (sprite.dishRow >= 0 ? sprite.dishRow : 0);
 
-      // ---- Phase 1: Approach (DS appears as dot, grows) ----
-      // 6.0s total across 5 frames
-
-      {
-        // Frame 1: empty starfield — 1200ms
-        const mono = starfieldCopy();
-        frames.push([1200, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
-      }
-      {
-        // Frame 2: DS_TINY appears far right — 1100ms
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_TINY, 60, 20);
-        frames.push([1100, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
-      }
-      {
-        // Frame 3: DS_SMALL near center — 1000ms
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_SMALL, 50, 18);
-        frames.push([1000, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
-      }
-      {
-        // Frame 4: DS_MED — 900ms
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_MED, 30, 14);
-        frames.push([900, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
-      }
-      {
-        // Frame 5: DS_LARGE in final position — 800ms
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
-        frames.push([800, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
-      }
-
-      // ---- Phase 2: X-Wings enter and strafe ----
-      // 3.2s across 7 frames (~460ms each)
-      // X-Wings fly in from right side, advancing leftward
-      const xwingPaths = [
-        { ax: 128, bx: 132, cx: 124 },
-        { ax: 116, bx: 120, cx: 112 },
-        { ax: 104, bx: 108, cx: 100 },
-        { ax:  96, bx: 100, cx:  92 },
-        { ax:  90, bx:  94, cx:  86 },
-        { ax:  84, bx:  88, cx:  80 },
-        { ax:  80, bx:  84, cx:  78 },
-      ];
-
-      for (let i = 0; i < xwingPaths.length; i++) {
-        const { ax, bx, cx } = xwingPaths[i];
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
-
-        // Alternate sprites for banking feel
-        const spriteIdx = i % 3;
-        const sprite = XWING_SPRITES[spriteIdx];
-        overlaySprite(mono, sprite, ax, ROW_A);
-        overlaySprite(mono, sprite, bx, ROW_B);
-        overlaySprite(mono, sprite, cx, ROW_C);
-
-        // Yellow: engine glow dots + laser bolts on last 3 frames
-        const yellow = emptyGrid();
-
-        // Engine glow — rightmost col of center row of each X-Wing
-        const glowOffsetCol = sprite[2].length; // one past the sprite
-        if (ax + glowOffsetCol < W) yellow[ROW_A + 2][ax + glowOffsetCol] = "·";
-        if (bx + glowOffsetCol < W) yellow[ROW_B + 2][bx + glowOffsetCol] = "·";
-        if (cx + glowOffsetCol < W) yellow[ROW_C + 2][cx + glowOffsetCol] = "·";
-
-        if (i >= 4) {
-          // Laser bolts leftward from each X-Wing nose
-          const bolts = [
-            [ax - 1, ROW_A + 2],
-            [bx - 1, ROW_B + 2],
-            [cx - 1, ROW_C + 2],
-          ];
-          for (const [bx0, by0] of bolts) {
-            for (let k = 0; k < 7; k++) {
-              const x = bx0 - k * 2;
-              if (x >= 0 && x < W) yellow[by0][x] = "-";
-            }
-          }
-        }
-
-        frames.push([460, gridToString(mono), gridToString(yellow), gridToString(emptyGrid()), {}]);
-      }
-
-      // ---- Phase 2b: X-Wings hold position ----
-      {
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
-        overlaySprite(mono, XWING_LEVEL, HOLD_A, ROW_A);
-        overlaySprite(mono, XWING_LEVEL, HOLD_B, ROW_B);
-        overlaySprite(mono, XWING_LEVEL, HOLD_C, ROW_C);
-        const yellow = emptyGrid();
-        // Engine glows on hold
-        yellow[ROW_A + 2][HOLD_A + XWING_LEVEL[2].length] = "·";
-        yellow[ROW_B + 2][HOLD_B + XWING_LEVEL[2].length] = "·";
-        yellow[ROW_C + 2][HOLD_C + XWING_LEVEL[2].length] = "·";
-        frames.push([400, gridToString(mono), gridToString(yellow), gridToString(emptyGrid()), {}]);
-      }
-
-      // ---- Phase 3: DS charges (dish glow buildup) ----
-      // 3.0s across 5 frames
-      const glowSteps = [".", "o", "O", "0", "@"];
-      for (let i = 0; i < glowSteps.length; i++) {
-        const mono = starfieldCopy();
-        const dsSprite = (i >= 2) ? dsLargeWithDishGlow(glowSteps[i]) : DS_LARGE;
-        overlaySprite(mono, dsSprite, DS_X, DS_Y);
-
-        const xwingSprite = (i % 2 === 0) ? XWING_LEVEL : XWING_BANK_UP;
-        overlaySprite(mono, xwingSprite, HOLD_A, ROW_A);
-        overlaySprite(mono, xwingSprite, HOLD_B, ROW_B);
-        overlaySprite(mono, xwingSprite, HOLD_C, ROW_C);
-
-        // Yellow: engine glows
-        const yellow = emptyGrid();
-        yellow[ROW_A + 2][HOLD_A + xwingSprite[2].length] = "·";
-        yellow[ROW_B + 2][HOLD_B + xwingSprite[2].length] = "·";
-        yellow[ROW_C + 2][HOLD_C + xwingSprite[2].length] = "·";
-
-        // Red: dish glow building
-        const red = emptyGrid();
-        if (i >= 1) {
-          red[DISH_Y][DISH_X] = glowSteps[i];
-          // Ambient glow halo
-          if (i >= 3) {
-            if (DISH_Y - 1 >= 0) red[DISH_Y - 1][DISH_X] = ".";
-            if (DISH_Y + 1 < H)  red[DISH_Y + 1][DISH_X] = ".";
-            if (DISH_X - 1 >= 0) red[DISH_Y][DISH_X - 1] = ".";
-            if (DISH_X + 1 < W)  red[DISH_Y][DISH_X + 1] = ".";
-          }
-        }
-
-        const delay = [650, 600, 550, 500, 420][i];
-        frames.push([delay, gridToString(mono), gridToString(yellow), gridToString(red), {}]);
-      }
-
-      // ---- Phase 4: Convergence streaks ----
-      // 0.48s — UNCHANGED behavior
-      {
-        const mono = starfieldCopy();
-        overlaySprite(mono, dsLargeWithDishGlow("@"), DS_X, DS_Y);
-        overlaySprite(mono, XWING_LEVEL, HOLD_A, ROW_A);
-        overlaySprite(mono, XWING_LEVEL, HOLD_B, ROW_B);
-        overlaySprite(mono, XWING_LEVEL, HOLD_C, ROW_C);
-        const red = emptyGrid();
-        red[DISH_Y][DISH_X] = "@";
-        drawConvergenceStreaks(red, DISH_X, DISH_Y, 2);
-        frames.push([260, gridToString(mono), gridToString(emptyGrid()), gridToString(red), {}]);
-      }
-      {
-        const mono = starfieldCopy();
-        overlaySprite(mono, dsLargeWithDishGlow("@"), DS_X, DS_Y);
-        overlaySprite(mono, XWING_BANK_UP, HOLD_A, ROW_A);
-        overlaySprite(mono, XWING_BANK_UP, HOLD_B, ROW_B);
-        overlaySprite(mono, XWING_BANK_UP, HOLD_C, ROW_C);
-        const red = emptyGrid();
-        red[DISH_Y][DISH_X] = "@";
-        drawConvergenceStreaks(red, DISH_X, DISH_Y, 4);
-        frames.push([220, gridToString(mono), gridToString(emptyGrid()), gridToString(red), {}]);
-      }
-
-      // ---- Phase 5: Beam fires ----
-      // 0.48s — same visual feel
-      {
-        // Beam thin, beginning to extend
-        const mono = starfieldCopy();
-        overlaySprite(mono, dsLargeWithDishGlow("@"), DS_X, DS_Y);
-        overlaySprite(mono, XWING_LEVEL, HOLD_A, ROW_A);
-        overlaySprite(mono, XWING_LEVEL, HOLD_B, ROW_B);
-        overlaySprite(mono, XWING_LEVEL, HOLD_C, ROW_C);
-        const red = emptyGrid();
-        drawBeam(red, DISH_X + 1, DISH_Y, 50, 1);
-        frames.push([90, gridToString(mono), gridToString(emptyGrid()), gridToString(red), { shake: true }]);
-      }
-      {
-        // Beam full width, X-Wings begin evaporating
-        const mono = starfieldCopy();
-        overlaySprite(mono, dsLargeWithDishGlow("@"), DS_X, DS_Y);
-        eraseRect(mono, HOLD_A - 1, ROW_A - 1, 12, 7);
-        eraseRect(mono, HOLD_B - 1, ROW_B - 1, 12, 7);
-        eraseRect(mono, HOLD_C - 1, ROW_C - 1, 12, 7);
-        const red = emptyGrid();
-        drawBeam(red, DISH_X + 1, DISH_Y, W - DISH_X - 2, 3);
-        overlaySprite(red, EXP_TINY, HOLD_A + 1, ROW_A + 1);
-        overlaySprite(red, EXP_TINY, HOLD_B + 1, ROW_B + 1);
-        overlaySprite(red, EXP_TINY, HOLD_C + 1, ROW_C + 1);
-        frames.push([110, gridToString(mono), gridToString(emptyGrid()), gridToString(red), { shake: true, flash: true }]);
-      }
-      {
-        // Peak beam + bigger explosions
-        const mono = starfieldCopy();
-        overlaySprite(mono, dsLargeWithDishGlow("@"), DS_X, DS_Y);
-        eraseRect(mono, HOLD_A - 2, ROW_A - 2, 14, 9);
-        eraseRect(mono, HOLD_B - 2, ROW_B - 2, 14, 9);
-        eraseRect(mono, HOLD_C - 2, ROW_C - 2, 14, 9);
-        const red = emptyGrid();
-        drawBeam(red, DISH_X + 1, DISH_Y, W - DISH_X - 2, 3);
-        overlaySprite(red, EXP_SMALL, HOLD_A, ROW_A + 1);
-        overlaySprite(red, EXP_SMALL, HOLD_B, ROW_B + 1);
-        overlaySprite(red, EXP_SMALL, HOLD_C, ROW_C + 1);
-        frames.push([130, gridToString(mono), gridToString(emptyGrid()), gridToString(red), { shake: true }]);
-      }
-      {
-        // Beam continues, explosions peak (medium)
-        const mono = starfieldCopy();
-        overlaySprite(mono, dsLargeWithDishGlow("@"), DS_X, DS_Y);
-        eraseRect(mono, HOLD_A - 3, ROW_A - 2, 16, 9);
-        eraseRect(mono, HOLD_B - 3, ROW_B - 2, 16, 9);
-        eraseRect(mono, HOLD_C - 3, ROW_C - 2, 16, 9);
-        const red = emptyGrid();
-        drawBeam(red, DISH_X + 1, DISH_Y, W - DISH_X - 2, 3);
-        overlaySprite(red, EXP_MED, HOLD_A - 1, ROW_A);
-        overlaySprite(red, EXP_MED, HOLD_B - 1, ROW_B);
-        overlaySprite(red, EXP_MED, HOLD_C - 1, ROW_C);
-        frames.push([150, gridToString(mono), gridToString(emptyGrid()), gridToString(red), { shake: true }]);
-      }
-
-      // ---- Phase 6: Aftermath — beam fades, explosions dissipate ----
-      // 1.1s across 3 frames
-      {
-        // Beam thinning, large explosions
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
-        eraseRect(mono, HOLD_A - 4, ROW_A - 2, 18, 9);
-        eraseRect(mono, HOLD_B - 4, ROW_B - 2, 18, 9);
-        eraseRect(mono, HOLD_C - 4, ROW_C - 2, 18, 9);
-        const red = emptyGrid();
-        drawBeam(red, DISH_X + 1, DISH_Y, W - DISH_X - 2, 1);
-        overlaySprite(red, EXP_LARGE, HOLD_A - 3, ROW_A - 1);
-        overlaySprite(red, EXP_LARGE, HOLD_B - 3, ROW_B - 1);
-        overlaySprite(red, EXP_LARGE, HOLD_C - 3, ROW_C - 1);
-        frames.push([380, gridToString(mono), gridToString(emptyGrid()), gridToString(red), {}]);
-      }
-      {
-        // Beam gone, medium explosions
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
-        const red = emptyGrid();
-        overlaySprite(red, EXP_MED, HOLD_A - 1, ROW_A);
-        overlaySprite(red, EXP_MED, HOLD_B - 1, ROW_B);
-        overlaySprite(red, EXP_MED, HOLD_C - 1, ROW_C);
-        frames.push([380, gridToString(mono), gridToString(emptyGrid()), gridToString(red), {}]);
-      }
-      {
-        // Small bursts only
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
-        const red = emptyGrid();
-        overlaySprite(red, EXP_SMALL, HOLD_A, ROW_A + 1);
-        overlaySprite(red, EXP_SMALL, HOLD_B, ROW_B + 1);
-        overlaySprite(red, EXP_SMALL, HOLD_C, ROW_C + 1);
-        frames.push([340, gridToString(mono), gridToString(emptyGrid()), gridToString(red), {}]);
-      }
-
-      // ---- Phase 7: Debris drift ----
-      // 2.8s across 4 frames (700ms each)
-      const debrisSeeds = [];
-      for (const [dcx, dcy] of [
-        [HOLD_A + 2, ROW_A + 2],
-        [HOLD_B + 2, ROW_B + 2],
-        [HOLD_C + 2, ROW_C + 2],
-      ]) {
-        for (let k = 0; k < 10; k++) {
-          const dx = ((k * 13) % 11) - 5;
-          const dy = ((k * 7) % 7) - 3;
-          debrisSeeds.push([dcx + dx, dcy + dy]);
+      if (dishX >= 0 && dishX < W && dishY >= 0 && dishY < H) {
+        redGrid[dishY][dishX] = ch;
+        // Ambient halo when bright enough
+        if (intensity > 0.6) {
+          if (dishY - 1 >= 0) redGrid[dishY - 1][dishX] = ".";
+          if (dishY + 1 < H)  redGrid[dishY + 1][dishX] = ".";
+          if (dishX - 1 >= 0) redGrid[dishY][dishX - 1] = ".";
+          if (dishX + 1 < W)  redGrid[dishY][dishX + 1] = ".";
         }
       }
-
-      for (let step = 0; step < 4; step++) {
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
-        for (const [sx, sy] of debrisSeeds) {
-          const x = sx + step * 2;
-          const y = sy;
-          if (x >= 0 && x < W && y >= 0 && y < H) {
-            const chars = [".", "'", ",", "`", " "];
-            const ch = chars[Math.min(step, chars.length - 1)];
-            if (ch !== " ") mono[y][x] = ch;
-          }
-        }
-        frames.push([700, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
-      }
-
-      // ---- Phase 8: DS recedes ----
-      // 5.4s across 4 frames
-      {
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_MED, 30, 15);
-        frames.push([1200, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
-      }
-      {
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_SMALL, 50, 18);
-        frames.push([1300, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
-      }
-      {
-        const mono = starfieldCopy();
-        overlaySprite(mono, DS_TINY, 65, 20);
-        frames.push([1400, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
-      }
-      {
-        // Empty starfield — DS gone
-        const mono = starfieldCopy();
-        frames.push([1500, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
-      }
-
-      // ---- Loop beat: 1.8s empty starfield before restart ----
-      {
-        const mono = starfieldCopy();
-        frames.push([1800, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
-      }
-
-      return frames;
     }
 
     // -------------------------------------------------------------------------
-    // Pre-bake all frames once on load
+    // Charge progress — returns 0 outside charge phase, 0→1 during charge
     // -------------------------------------------------------------------------
-    const FRAMES = buildFrames();
+    function chargeProgress(t) {
+      const CHARGE_START = 16.0;
+      const CHARGE_END   = 20.5;
+      if (t < CHARGE_START || t >= CHARGE_END) return 0;
+      return easeInQuad((t - CHARGE_START) / (CHARGE_END - CHARGE_START));
+    }
 
+    // -------------------------------------------------------------------------
+    // CSS flags (shake / flash) — computed from beam-fire sub-steps
+    // -------------------------------------------------------------------------
+    function computeCssFlags(t) {
+      const BEAM_START = 21.0;
+      if (t < BEAM_START || t >= BEAM_START + 1.0) {
+        return { shake: false, flash: false };
+      }
+      const localT = t - BEAM_START;
+      const shake = (localT < 0.85);
+      const flash = (localT >= 0.10 && localT < 0.25);
+      return { shake, flash };
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase constants
+    // -------------------------------------------------------------------------
+    const DS_X    = 8;
+    const DS_Y    = 10;
+    const ROW_A   = 10;
+    const ROW_B   = 18;
+    const ROW_C   = 28;
+    const HOLD_A  = 80;
+    const HOLD_B  = 84;
+    const HOLD_C  = 78;
+
+    // -------------------------------------------------------------------------
+    // Event handlers — dispatch by kind
+    // -------------------------------------------------------------------------
+    const EVENT_HANDLERS = {
+
+      approach(ev, t01, localT, t, drift, mono, yellow, red, dsState) {
+        const radius = lerp(ev.from.radius, ev.to.radius, t01);
+        const x      = Math.round(lerp(ev.from.dsX, ev.to.dsX, t01));
+        const y      = Math.round(lerp(ev.from.dsY, ev.to.dsY, t01));
+        const sprite = getDsSprite(radius);
+        overlaySprite(mono, sprite, x + drift.x, y + drift.y);
+        dsState.radius  = radius;
+        dsState.x       = x;
+        dsState.y       = y;
+        dsState.visible = true;
+      },
+
+      hold(ev, t01, localT, t, drift, mono, yellow, red, dsState) {
+        overlaySprite(mono, DS_LARGE, DS_X + drift.x, DS_Y + drift.y);
+        // Engine glows for level X-Wings (added in strafeHold too)
+        dsState.radius  = 18;
+        dsState.x       = DS_X;
+        dsState.y       = DS_Y;
+        dsState.visible = true;
+      },
+
+      xwingStrafe(ev, t01, localT, t, drift, mono, yellow, red, dsState) {
+        overlaySprite(mono, DS_LARGE, DS_X + drift.x, DS_Y + drift.y);
+        dsState.radius  = 18;
+        dsState.x       = DS_X;
+        dsState.y       = DS_Y;
+        dsState.visible = true;
+
+        const wings = [
+          { fromX: 130, toX: HOLD_A, row: ROW_A },
+          { fromX: 134, toX: HOLD_B, row: ROW_B },
+          { fromX: 126, toX: HOLD_C, row: ROW_C },
+        ];
+
+        for (const wing of wings) {
+          const wx = Math.round(lerp(wing.fromX, wing.toX, t01));
+          let sprite;
+          if (localT < 0.30) sprite = XWING_BANK_UP;
+          else if (localT < 0.70) sprite = XWING_LEVEL;
+          else sprite = XWING_BANK_DOWN;
+
+          overlaySprite(mono, sprite, wx, wing.row);
+          const glowCol = wx + sprite[2].length;
+          if (glowCol >= 0 && glowCol < W) {
+            yellow[wing.row + 2][glowCol] = "·";
+          }
+        }
+      },
+
+      strafeHold(ev, t01, localT, t, drift, mono, yellow, red, dsState) {
+        overlaySprite(mono, DS_LARGE, DS_X + drift.x, DS_Y + drift.y);
+        dsState.radius  = 18;
+        dsState.x       = DS_X;
+        dsState.y       = DS_Y;
+        dsState.visible = true;
+
+        // Subtle banking cycle at hold positions
+        const phase = (t * 0.8) % 1.0;
+        let sprite;
+        if (phase < 0.33) sprite = XWING_LEVEL;
+        else if (phase < 0.66) sprite = XWING_BANK_UP;
+        else sprite = XWING_LEVEL;
+
+        overlaySprite(mono, sprite, HOLD_A, ROW_A);
+        overlaySprite(mono, sprite, HOLD_B, ROW_B);
+        overlaySprite(mono, sprite, HOLD_C, ROW_C);
+        yellow[ROW_A + 2][HOLD_A + sprite[2].length] = "·";
+        yellow[ROW_B + 2][HOLD_B + sprite[2].length] = "·";
+        yellow[ROW_C + 2][HOLD_C + sprite[2].length] = "·";
+      },
+
+      charge(ev, t01, localT, t, drift, mono, yellow, red, dsState) {
+        const cp = chargeProgress(t);
+        const glowChars = [".", ",", ":", "o", "O", "@"];
+        const glowIdx = Math.floor(cp * 5.99);
+        const glowCh = glowChars[Math.max(0, Math.min(5, glowIdx))];
+        const dsSprite = (cp > 0.3) ? dsLargeWithDishGlow(glowCh) : DS_LARGE;
+
+        overlaySprite(mono, dsSprite, DS_X + drift.x, DS_Y + drift.y);
+        dsState.radius  = 18;
+        dsState.x       = DS_X;
+        dsState.y       = DS_Y;
+        dsState.visible = true;
+
+        // Subtle banking at hold
+        const phase = (t * 0.8) % 1.0;
+        let sprite;
+        if (phase < 0.33) sprite = XWING_LEVEL;
+        else if (phase < 0.66) sprite = XWING_BANK_UP;
+        else sprite = XWING_LEVEL;
+
+        overlaySprite(mono, sprite, HOLD_A, ROW_A);
+        overlaySprite(mono, sprite, HOLD_B, ROW_B);
+        overlaySprite(mono, sprite, HOLD_C, ROW_C);
+        yellow[ROW_A + 2][HOLD_A + sprite[2].length] = "·";
+        yellow[ROW_B + 2][HOLD_B + sprite[2].length] = "·";
+        yellow[ROW_C + 2][HOLD_C + sprite[2].length] = "·";
+      },
+
+      convergence(ev, t01, localT, t, drift, mono, yellow, red, dsState) {
+        overlaySprite(mono, dsLargeWithDishGlow("@"), DS_X + drift.x, DS_Y + drift.y);
+        dsState.radius  = 18;
+        dsState.x       = DS_X;
+        dsState.y       = DS_Y;
+        dsState.visible = true;
+
+        overlaySprite(mono, XWING_LEVEL, HOLD_A, ROW_A);
+        overlaySprite(mono, XWING_LEVEL, HOLD_B, ROW_B);
+        overlaySprite(mono, XWING_LEVEL, HOLD_C, ROW_C);
+
+        // Streak length: 0→2 for first half, 2→4 for second half
+        const streakLen = localT < 0.5
+          ? Math.round(lerp(0, 2, easeInCubic(localT * 2)))
+          : Math.round(lerp(2, 4, easeInCubic((localT - 0.5) * 2)));
+
+        // Dish position in screen space (accounting for drift)
+        const dishScreenX = DS_X + drift.x + DS_LARGE.dishCol;
+        const dishScreenY = DS_Y + drift.y + DS_LARGE.dishRow;
+
+        red[dishScreenY][dishScreenX] = "@";
+        if (streakLen > 0) {
+          drawConvergenceStreaks(red, dishScreenX, dishScreenY, streakLen);
+        }
+      },
+
+      beamFire(ev, t01, localT, t, drift, mono, yellow, red, dsState) {
+        overlaySprite(mono, dsLargeWithDishGlow("@"), DS_X + drift.x, DS_Y + drift.y);
+        dsState.radius  = 18;
+        dsState.x       = DS_X;
+        dsState.y       = DS_Y;
+        dsState.visible = true;
+
+        const dishScreenX = DS_X + drift.x + DS_LARGE.dishCol;
+        const dishScreenY = DS_Y + drift.y + DS_LARGE.dishRow;
+
+        if (localT < 0.10) {
+          // Thin beam beginning to extend
+          const beamLen = Math.round(lerp(10, 50, localT / 0.10));
+          overlaySprite(mono, XWING_LEVEL, HOLD_A, ROW_A);
+          overlaySprite(mono, XWING_LEVEL, HOLD_B, ROW_B);
+          overlaySprite(mono, XWING_LEVEL, HOLD_C, ROW_C);
+          drawBeam(red, dishScreenX + 1, dishScreenY, beamLen, 1);
+
+        } else if (localT < 0.25) {
+          // Full beam, X-Wings vaporized, flash
+          eraseRect(mono, HOLD_A - 1, ROW_A - 1, 12, 7);
+          eraseRect(mono, HOLD_B - 1, ROW_B - 1, 12, 7);
+          eraseRect(mono, HOLD_C - 1, ROW_C - 1, 12, 7);
+          drawBeam(red, dishScreenX + 1, dishScreenY, W - dishScreenX - 2, 3);
+          overlaySprite(red, EXP_TINY, HOLD_A + 1, ROW_A + 1);
+          overlaySprite(red, EXP_TINY, HOLD_B + 1, ROW_B + 1);
+          overlaySprite(red, EXP_TINY, HOLD_C + 1, ROW_C + 1);
+
+        } else if (localT < 0.40) {
+          // Flash off, EXP_SMALL
+          eraseRect(mono, HOLD_A - 1, ROW_A - 1, 12, 7);
+          eraseRect(mono, HOLD_B - 1, ROW_B - 1, 12, 7);
+          eraseRect(mono, HOLD_C - 1, ROW_C - 1, 12, 7);
+          drawBeam(red, dishScreenX + 1, dishScreenY, W - dishScreenX - 2, 3);
+          overlaySprite(red, EXP_SMALL, HOLD_A, ROW_A + 1);
+          overlaySprite(red, EXP_SMALL, HOLD_B, ROW_B + 1);
+          overlaySprite(red, EXP_SMALL, HOLD_C, ROW_C + 1);
+
+        } else if (localT < 0.60) {
+          // EXP_MED
+          eraseRect(mono, HOLD_A - 3, ROW_A - 2, 16, 9);
+          eraseRect(mono, HOLD_B - 3, ROW_B - 2, 16, 9);
+          eraseRect(mono, HOLD_C - 3, ROW_C - 2, 16, 9);
+          drawBeam(red, dishScreenX + 1, dishScreenY, W - dishScreenX - 2, 3);
+          overlaySprite(red, EXP_MED, HOLD_A - 1, ROW_A);
+          overlaySprite(red, EXP_MED, HOLD_B - 1, ROW_B);
+          overlaySprite(red, EXP_MED, HOLD_C - 1, ROW_C);
+
+        } else if (localT < 0.85) {
+          // EXP_LARGE, beam thins
+          eraseRect(mono, HOLD_A - 4, ROW_A - 2, 18, 9);
+          eraseRect(mono, HOLD_B - 4, ROW_B - 2, 18, 9);
+          eraseRect(mono, HOLD_C - 4, ROW_C - 2, 18, 9);
+          drawBeam(red, dishScreenX + 1, dishScreenY, W - dishScreenX - 2, 1);
+          overlaySprite(red, EXP_LARGE, HOLD_A - 3, ROW_A - 1);
+          overlaySprite(red, EXP_LARGE, HOLD_B - 3, ROW_B - 1);
+          overlaySprite(red, EXP_LARGE, HOLD_C - 3, ROW_C - 1);
+
+        } else {
+          // Beam gone, EXP_MED only
+          overlaySprite(red, EXP_MED, HOLD_A - 1, ROW_A);
+          overlaySprite(red, EXP_MED, HOLD_B - 1, ROW_B);
+          overlaySprite(red, EXP_MED, HOLD_C - 1, ROW_C);
+        }
+      },
+
+      aftermath(ev, t01, localT, t, drift, mono, yellow, red, dsState) {
+        overlaySprite(mono, DS_LARGE, DS_X + drift.x, DS_Y + drift.y);
+        dsState.radius  = 18;
+        dsState.x       = DS_X;
+        dsState.y       = DS_Y;
+        dsState.visible = true;
+
+        // Explosion interpolation: grow 0→max first 0.4s, then fade max→0 over 0.9s
+        const TOTAL_DUR = ev.end - ev.start;
+        const growFrac  = 0.4 / TOTAL_DUR;
+
+        if (localT < growFrac) {
+          // Growing: EXP_SMALL → EXP_MED
+          const sub = localT / growFrac;
+          if (sub < 0.5) {
+            overlaySprite(red, EXP_SMALL, HOLD_A, ROW_A + 1);
+            overlaySprite(red, EXP_SMALL, HOLD_B, ROW_B + 1);
+            overlaySprite(red, EXP_SMALL, HOLD_C, ROW_C + 1);
+          } else {
+            overlaySprite(red, EXP_MED, HOLD_A - 1, ROW_A);
+            overlaySprite(red, EXP_MED, HOLD_B - 1, ROW_B);
+            overlaySprite(red, EXP_MED, HOLD_C - 1, ROW_C);
+          }
+        } else {
+          // Fading: EXP_LARGE → EXP_MED → EXP_SMALL → none
+          const fadeFrac = (localT - growFrac) / (1.0 - growFrac);
+          if (fadeFrac < 0.35) {
+            overlaySprite(red, EXP_LARGE, HOLD_A - 3, ROW_A - 1);
+            overlaySprite(red, EXP_LARGE, HOLD_B - 3, ROW_B - 1);
+            overlaySprite(red, EXP_LARGE, HOLD_C - 3, ROW_C - 1);
+          } else if (fadeFrac < 0.65) {
+            overlaySprite(red, EXP_MED, HOLD_A - 1, ROW_A);
+            overlaySprite(red, EXP_MED, HOLD_B - 1, ROW_B);
+            overlaySprite(red, EXP_MED, HOLD_C - 1, ROW_C);
+          } else if (fadeFrac < 0.90) {
+            overlaySprite(red, EXP_SMALL, HOLD_A, ROW_A + 1);
+            overlaySprite(red, EXP_SMALL, HOLD_B, ROW_B + 1);
+            overlaySprite(red, EXP_SMALL, HOLD_C, ROW_C + 1);
+          }
+          // else: nothing (faded out)
+        }
+      },
+
+      debrisDrift(ev, t01, localT, t, drift, mono, yellow, red, dsState) {
+        overlaySprite(mono, DS_LARGE, DS_X + drift.x, DS_Y + drift.y);
+        dsState.radius  = 18;
+        dsState.x       = DS_X;
+        dsState.y       = DS_Y;
+        dsState.visible = true;
+
+        const debrisChars = [".", "'", ",", "`", " "];
+
+        const origins = [
+          { cx: HOLD_A + 2, cy: ROW_A + 2 },
+          { cx: HOLD_B + 2, cy: ROW_B + 2 },
+          { cx: HOLD_C + 2, cy: ROW_C + 2 },
+        ];
+
+        for (const origin of origins) {
+          for (let k = 0; k < 8; k++) {
+            // Deterministic velocity from seed
+            const seed = origin.cx * 31 + origin.cy * 17 + k * 7;
+            const vx = ((seed * 13) % 11) - 5;
+            const vy = ((seed * 7) % 7) - 3;
+            const lifetime = 0.6 + ((seed * 3) % 5) * 0.08;
+
+            if (localT > lifetime) continue;
+
+            const fracT = localT / lifetime;
+            const px = Math.round(origin.cx + vx * localT * 4);
+            const py = Math.round(origin.cy + vy * localT * 2);
+
+            if (px >= 0 && px < W && py >= 0 && py < H) {
+              const charIdx = Math.min(Math.floor(fracT * 4.99), 4);
+              const ch = debrisChars[charIdx];
+              if (ch !== " ") mono[py][px] = ch;
+            }
+          }
+        }
+      },
+
+      recede(ev, t01, localT, t, drift, mono, yellow, red, dsState) {
+        const radius = lerp(ev.from.radius, ev.to.radius, t01);
+        const x      = Math.round(lerp(ev.from.dsX, ev.to.dsX, t01));
+        const y      = Math.round(lerp(ev.from.dsY, ev.to.dsY, t01));
+        const sprite = getDsSprite(radius);
+        overlaySprite(mono, sprite, x + drift.x, y + drift.y);
+        dsState.radius  = radius;
+        dsState.x       = x;
+        dsState.y       = y;
+        dsState.visible = (radius >= 1);
+      },
+
+      empty(ev, t01, localT, t, drift, mono, yellow, red, dsState) {
+        // Just starfield, no DS
+        dsState.visible = false;
+      },
+    };
+
+    // -------------------------------------------------------------------------
+    // TIMELINE — all events, may overlap
+    // -------------------------------------------------------------------------
+    const TIMELINE = [
+      {
+        start: 0.0, end: 7.5,
+        kind: "approach",
+        ease: "easeOutCubic",
+        from: { radius: 0,  dsX: 95, dsY: 22 },
+        to:   { radius: 18, dsX: DS_X,  dsY: DS_Y },
+      },
+      {
+        start: 7.5, end: 8.5,
+        kind: "hold",
+        ease: "linear",
+      },
+      {
+        start: 8.5, end: 13.5,
+        kind: "xwingStrafe",
+        ease: "easeOutCubic",
+      },
+      {
+        start: 13.5, end: 16.0,
+        kind: "strafeHold",
+        ease: "linear",
+      },
+      {
+        start: 16.0, end: 20.5,
+        kind: "charge",
+        ease: "easeInQuad",
+      },
+      {
+        start: 20.5, end: 21.0,
+        kind: "convergence",
+        ease: "easeInCubic",
+      },
+      {
+        start: 21.0, end: 22.0,
+        kind: "beamFire",
+        ease: "linear",
+      },
+      {
+        start: 22.0, end: 23.5,
+        kind: "aftermath",
+        ease: "linear",
+      },
+      {
+        start: 23.5, end: 26.0,
+        kind: "debrisDrift",
+        ease: "linear",
+      },
+      {
+        start: 26.0, end: 29.0,
+        kind: "recede",
+        ease: "easeInCubic",
+        from: { radius: 18, dsX: DS_X, dsY: DS_Y },
+        to:   { radius: 0,  dsX: 65,   dsY: 22 },
+      },
+      {
+        start: 29.0, end: 30.0,
+        kind: "empty",
+        ease: "linear",
+      },
+    ];
+
+    // -------------------------------------------------------------------------
+    // Render loop
+    // -------------------------------------------------------------------------
     const monoEl   = document.getElementById("mono");
     const yellowEl = document.getElementById("yellow");
     const redEl    = document.getElementById("red");
     const stageEl  = document.getElementById("stage");
 
-    let cancelled = false;
-    let paused = false;
+    const TOTAL = 30.0;
+    let loopStart = null;
 
-    // Visibility handler — pause when tab is hidden
-    document.addEventListener("visibilitychange", () => {
-      paused = document.hidden;
-    });
+    function frame(ts) {
+      requestAnimationFrame(frame);
 
-    async function sleep(ms) {
-      const TICK = 100;
-      const end = Date.now() + ms;
-      while (Date.now() < end) {
-        if (cancelled) return;
-        // Drain pause ticks without consuming animation time
-        while (paused && !cancelled) {
-          await new Promise(r => setTimeout(r, TICK));
-        }
-        const remaining = end - Date.now();
-        await new Promise(r => setTimeout(r, Math.min(TICK, remaining)));
+      if (document.hidden) {
+        loopStart = null;
+        return;
       }
+
+      if (loopStart === null) loopStart = ts;
+      let t = (ts - loopStart) / 1000;
+      if (t > TOTAL) {
+        loopStart = ts;
+        t = 0;
+      }
+
+      const mono   = emptyGrid();
+      const yellow = emptyGrid();
+      const red    = emptyGrid();
+
+      // Paint twinkling starfield base
+      paintStarfieldWithTwinkle(mono, t);
+
+      // Compute ambient DS drift for this frame
+      const drift = computeDrift(t);
+
+      // Track current DS state for ember + beam lookups
+      const dsState = { radius: 0, x: DS_X, y: DS_Y, visible: false };
+
+      // Dispatch all active timeline events
+      for (const ev of TIMELINE) {
+        if (t >= ev.start && t < ev.end) {
+          const localT = (t - ev.start) / (ev.end - ev.start);
+          const t01 = applyEase(ev.ease, localT);
+          EVENT_HANDLERS[ev.kind](ev, t01, localT, t, drift, mono, yellow, red, dsState);
+        }
+      }
+
+      // Always-on dish ember (uses dsState populated above)
+      paintDishEmber(red, t, dsState, drift);
+
+      // CSS flags
+      const cssFlags = computeCssFlags(t);
+      stageEl.classList.toggle("shake", cssFlags.shake);
+      stageEl.classList.toggle("flash", cssFlags.flash);
+
+      monoEl.textContent   = gridToString(mono);
+      yellowEl.textContent = gridToString(yellow);
+      redEl.textContent    = gridToString(red);
     }
 
-    async function play() {
-      while (!cancelled) {
-        for (const [delay, monoStr, yellowStr, redStr, flags] of FRAMES) {
-          if (cancelled) break;
-          monoEl.textContent  = monoStr;
-          yellowEl.textContent = yellowStr;
-          redEl.textContent   = redStr;
-          stageEl.classList.toggle("shake",   !!flags.shake);
-          stageEl.classList.toggle("flash",   !!flags.flash);
-          stageEl.classList.toggle("blackout", !!flags.blackout);
-          await sleep(delay);
-        }
-        stageEl.classList.remove("shake", "flash", "blackout");
-      }
-    }
-
-    play();
+    requestAnimationFrame(frame);
   </script>
 </body>
 </html>
