@@ -178,153 +178,105 @@
     }
 
     // -------------------------------------------------------------------------
-    // Coruscant cityscape — baked once at load
+    // Tatooine binary suns + dim horizon — baked once at load
     // -------------------------------------------------------------------------
-    function buildCityscape() {
-      const monoCells = [];
-      const yellowLights = [];
-      const stars = [];
+    function buildTatooineSky() {
+      // Two distant suns, close together (iconic farewell-shot composition)
+      const sunPositions = [
+        { col: 100, row: 11 },   // larger / closer sun
+        { col: 140, row: 13 },   // smaller / further sun, slightly lower
+      ];
 
-      // Track which cells are occupied by building walls (for haze exclusion)
-      const wallSet = new Set();
-
-      // Building generation
-      const buildings = [];
-      let col = 2;
-      while (col < 238) {
-        const seed_h = hashFn(col, 999);
-        const seed_w = hashFn(col, 1234);
-        const width = 3 + Math.floor(seed_w * 5);  // 3..7 cols wide
-        let top = 6 + Math.floor(seed_h * 30);     // row 6..35
-        if (hashFn(col, 7) < 0.15) top = 6 + Math.floor(hashFn(col, 8) * 4);  // 15% tall
-        const base = 45;
-        const gap = 1 + Math.floor(hashFn(col, 99) * 3);
-        buildings.push({ colStart: col, width, top, base });
-        col += width + gap;
-      }
-
-      for (let bi = 0; bi < buildings.length; bi++) {
-        const b = buildings[bi];
-        const { colStart, width, top, base } = b;
-
-        // Left edge
-        for (let r = top; r <= base; r++) {
-          monoCells.push({ c: colStart, r, ch: "║" });
-          wallSet.add(`${colStart},${r}`);
-        }
-        // Right edge
-        for (let r = top; r <= base; r++) {
-          monoCells.push({ c: colStart + width - 1, r, ch: "║" });
-          wallSet.add(`${colStart + width - 1},${r}`);
-        }
-        // Top horizontal
-        for (let c = colStart + 1; c < colStart + width - 1; c++) {
-          monoCells.push({ c, r: top, ch: "═" });
-          wallSet.add(`${c},${top}`);
-        }
-        // Top-left corner
-        monoCells.push({ c: colStart, r: top, ch: "╔" });
-        wallSet.add(`${colStart},${top}`);
-        // Top-right corner
-        monoCells.push({ c: colStart + width - 1, r: top, ch: "╗" });
-        wallSet.add(`${colStart + width - 1},${top}`);
-
-        // Antenna spike: if top < 10 and hashFn(colStart, 5) < 0.2
-        if (top < 10 && hashFn(colStart, 5) < 0.2) {
-          const antennaC = colStart + Math.floor(width / 2);
-          const antennaR = top - 1;
-          if (antennaR >= 0) {
-            monoCells.push({ c: antennaC, r: antennaR, ch: "│" });
-            wallSet.add(`${antennaC},${antennaR}`);
-          }
-        }
-
-        // Roof variation: every 4th building gets "╤" mid-top
-        if (bi % 4 === 0 && width >= 4) {
-          const midC = colStart + Math.floor(width / 2);
-          monoCells.push({ c: midC, r: top, ch: "╤" });
-        }
-
-        // Window lights
-        for (let r = top + 1; r <= base - 1; r++) {
-          for (let c = colStart + 1; c <= colStart + width - 2; c++) {
-            const h = hashFn(c * 7, r * 13);
-            if (h < 0.10) {
-              const baseChar = h < 0.03 ? "·" : (h < 0.07 ? "." : ":");
-              const phase = hashFn(c, r) * Math.PI * 2;
-              yellowLights.push({ c, r, phase, baseChar });
-            }
-          }
-        }
-      }
-
-      // Cap window lights at 220
-      const cappedLights = yellowLights.slice(0, 220);
-
-      // Ground horizon line at row 46
-      for (let c = 0; c < W; c++) {
-        monoCells.push({ c, r: 46, ch: "─" });
-      }
-
-      // Atmospheric haze (rows 40-45, non-wall cells)
-      for (let c = 0; c < 240; c++) {
-        for (let r = 40; r <= 45; r++) {
-          if (wallSet.has(`${c},${r}`)) continue;
-          const hh = hashFn(c, r * 3);
-          if (hh < 0.06) {
-            monoCells.push({ c, r, ch: hh < 0.02 ? "," : "." });
-          }
-        }
-      }
-
-      // Stars in rows 0..7
-      for (let r = 0; r <= 7; r++) {
+      // Sparse atmospheric horizon dots — denser closer to suns, fading outward and downward
+      const horizonDots = [];
+      for (let r = 18; r <= 32; r++) {
         for (let c = 0; c < W; c++) {
-          const h = (r * 131 + c * 17 + r * c * 3) % 137;
-          if (h === 0) stars.push({ c, r, baseChar: "*", phase: hashFn(c, r) * Math.PI * 2 });
-          else if (h < 3) stars.push({ c, r, baseChar: ".", phase: hashFn(c, r) * Math.PI * 2 });
+          const h = hashFn(c, r);
+          // Distance to nearest sun (vertical x2 because ASCII cells are ~2:1 tall:wide)
+          let minDist = Infinity;
+          for (const s of sunPositions) {
+            const d = Math.sqrt((c - s.col) ** 2 + ((r - s.row) * 2) ** 2);
+            if (d < minDist) minDist = d;
+          }
+          // Density falls off with distance from suns
+          const density = Math.max(0, 0.22 - minDist / 220);
+          if (h < density) {
+            const charI = Math.floor(hashFn(c * 3, r * 5) * 4);
+            const ch = [".", "'", ",", "·"][charI];
+            horizonDots.push({ c, r, ch });
+          }
         }
       }
 
-      return { monoCells, yellowLights: cappedLights, stars };
+      // Very sparse stars in upper sky (~15 stars total) — barely visible specks
+      const stars = [];
+      for (let r = 0; r <= 5; r++) {
+        for (let c = 0; c < W; c++) {
+          const h = (r * 131 + c * 17 + r * c * 3) % 401;
+          if (h === 0) {
+            stars.push({ c, r, baseChar: "·", phase: hashFn(c, r) * Math.PI * 2 });
+          }
+        }
+      }
+
+      return { sunPositions, horizonDots, stars };
     }
 
-    const CITYSCAPE = buildCityscape();
+    const SKY = buildTatooineSky();
 
-    function paintCityscape(monoGrid) {
-      for (const cell of CITYSCAPE.monoCells) {
-        if (cell.r >= 0 && cell.r < H && cell.c >= 0 && cell.c < W) {
-          monoGrid[cell.r][cell.c] = cell.ch;
+    function safeSet(grid, c, r, ch) {
+      if (r >= 0 && r < H && c >= 0 && c < W) grid[r][c] = ch;
+    }
+
+    function paintTatooineSky(monoGrid, t) {
+      // Paint static horizon dots
+      for (const dot of SKY.horizonDots) {
+        safeSet(monoGrid, dot.c, dot.r, dot.ch);
+      }
+
+      // Paint the two suns with a subtle pulse
+      for (let i = 0; i < SKY.sunPositions.length; i++) {
+        const sun = SKY.sunPositions[i];
+        const pulse = 0.5 + 0.5 * Math.sin(t * (0.3 + i * 0.1) + i * 1.7);
+        const cx = sun.col, cy = sun.row;
+
+        // Bright core
+        safeSet(monoGrid, cx, cy, "O");
+        // Inner ring (always lit)
+        safeSet(monoGrid, cx - 1, cy, "°");
+        safeSet(monoGrid, cx + 1, cy, "°");
+        safeSet(monoGrid, cx, cy - 1, "'");
+        safeSet(monoGrid, cx, cy + 1, "`");
+
+        // Mid halo (always lit)
+        safeSet(monoGrid, cx - 2, cy, "·");
+        safeSet(monoGrid, cx + 2, cy, "·");
+        safeSet(monoGrid, cx - 1, cy - 1, "·");
+        safeSet(monoGrid, cx + 1, cy - 1, "·");
+        safeSet(monoGrid, cx - 1, cy + 1, "·");
+        safeSet(monoGrid, cx + 1, cy + 1, "·");
+
+        // Outer halo (pulsing in/out)
+        if (pulse > 0.55) {
+          safeSet(monoGrid, cx, cy - 2, ".");
+          safeSet(monoGrid, cx, cy + 2, ".");
+          safeSet(monoGrid, cx - 3, cy, ".");
+          safeSet(monoGrid, cx + 3, cy, ".");
+        }
+        if (pulse > 0.85) {
+          safeSet(monoGrid, cx - 2, cy - 1, ".");
+          safeSet(monoGrid, cx + 2, cy - 1, ".");
+          safeSet(monoGrid, cx - 2, cy + 1, ".");
+          safeSet(monoGrid, cx + 2, cy + 1, ".");
         }
       }
     }
 
     function paintStars(monoGrid, t) {
-      for (const star of CITYSCAPE.stars) {
-        const b = 0.5 + 0.5 * Math.sin(t * 0.6 + star.phase);
-        let ch = " ";
-        if (star.baseChar === "*") {
-          if (b > 0.55) ch = "*";
-          else if (b > 0.25) ch = ".";
-        } else {
-          if (b > 0.4) ch = ".";
-        }
-        if (ch !== " " && monoGrid[star.r][star.c] === " ") {
-          monoGrid[star.r][star.c] = ch;
-        }
-      }
-    }
-
-    function paintWindowLights(yellowGrid, t) {
-      for (const light of CITYSCAPE.yellowLights) {
-        const b = 0.5 + 0.5 * Math.sin(t * 1.8 + light.phase);
-        if (b > 0.45) {
-          let ch = light.baseChar;
-          if (b > 0.85) {
-            if (ch === ".") ch = "o";
-            // `:` and `·` stay as-is for variety
-          }
-          yellowGrid[light.r][light.c] = ch;
+      for (const star of SKY.stars) {
+        const b = 0.5 + 0.5 * Math.sin(t * 0.4 + star.phase);
+        if (b > 0.5 && monoGrid[star.r][star.c] === " ") {
+          monoGrid[star.r][star.c] = star.baseChar;
         }
       }
     }
@@ -963,16 +915,13 @@
       const green  = emptyGrid();
       const blue   = emptyGrid();
 
-      // 1. Paint cityscape (buildings, horizon, haze)
-      paintCityscape(mono);
+      // 1. Paint Tatooine sky (suns, halos, horizon dots)
+      paintTatooineSky(mono, t);
 
-      // 2. Paint twinkling stars (top 8 rows only)
+      // 2. Paint sparse upper-sky stars
       paintStars(mono, t);
 
-      // 3. Paint window lights into yellow layer
-      paintWindowLights(yellow, t);
-
-      // 4. Aircraft trace logic
+      // 3. Aircraft trace logic
       // Loop reset detection
       if (t < 0.1 && previousT > 1.0) {
         aircraft = null;
