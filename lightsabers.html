@@ -35,7 +35,7 @@
       100% { transform: translate(1px, 2px); }
     }
     pre {
-      font-size: clamp(6px, calc(100vw / 155), 14px);
+      font-size: clamp(5px, calc(100vw / 250), 10px);
       line-height: 1.0;
       letter-spacing: 0;
       white-space: pre;
@@ -92,8 +92,8 @@
   </div>
 
   <script>
-    const W = 140;
-    const H = 40;
+    const W = 240;
+    const H = 80;
 
     // -------------------------------------------------------------------------
     // Deterministic hash
@@ -178,119 +178,163 @@
     }
 
     // -------------------------------------------------------------------------
-    // Starfield — gated to window region (cols 11..129, rows 4..21)
+    // Coruscant cityscape — baked once at load
     // -------------------------------------------------------------------------
-    function makeStarfield() {
+    function buildCityscape() {
+      const monoCells = [];
+      const yellowLights = [];
       const stars = [];
-      for (let r = 4; r <= 21; r++) {
-        for (let c = 11; c <= 129; c++) {
-          const h = (r * 131 + c * 17 + r * c * 3) % 97;
-          let baseChar = " ";
-          if (h === 0) baseChar = "*";
-          else if (h < 4) baseChar = ".";
-          if (baseChar !== " ") {
-            stars.push({ c, r, baseChar, phase: hashFn(c, r) * Math.PI * 2 });
+
+      // Track which cells are occupied by building walls (for haze exclusion)
+      const wallSet = new Set();
+
+      // Building generation
+      const buildings = [];
+      let col = 2;
+      while (col < 238) {
+        const seed_h = hashFn(col, 999);
+        const seed_w = hashFn(col, 1234);
+        const width = 3 + Math.floor(seed_w * 5);  // 3..7 cols wide
+        let top = 6 + Math.floor(seed_h * 30);     // row 6..35
+        if (hashFn(col, 7) < 0.15) top = 6 + Math.floor(hashFn(col, 8) * 4);  // 15% tall
+        const base = 45;
+        const gap = 1 + Math.floor(hashFn(col, 99) * 3);
+        buildings.push({ colStart: col, width, top, base });
+        col += width + gap;
+      }
+
+      for (let bi = 0; bi < buildings.length; bi++) {
+        const b = buildings[bi];
+        const { colStart, width, top, base } = b;
+
+        // Left edge
+        for (let r = top; r <= base; r++) {
+          monoCells.push({ c: colStart, r, ch: "║" });
+          wallSet.add(`${colStart},${r}`);
+        }
+        // Right edge
+        for (let r = top; r <= base; r++) {
+          monoCells.push({ c: colStart + width - 1, r, ch: "║" });
+          wallSet.add(`${colStart + width - 1},${r}`);
+        }
+        // Top horizontal
+        for (let c = colStart + 1; c < colStart + width - 1; c++) {
+          monoCells.push({ c, r: top, ch: "═" });
+          wallSet.add(`${c},${top}`);
+        }
+        // Top-left corner
+        monoCells.push({ c: colStart, r: top, ch: "╔" });
+        wallSet.add(`${colStart},${top}`);
+        // Top-right corner
+        monoCells.push({ c: colStart + width - 1, r: top, ch: "╗" });
+        wallSet.add(`${colStart + width - 1},${top}`);
+
+        // Antenna spike: if top < 10 and hashFn(colStart, 5) < 0.2
+        if (top < 10 && hashFn(colStart, 5) < 0.2) {
+          const antennaC = colStart + Math.floor(width / 2);
+          const antennaR = top - 1;
+          if (antennaR >= 0) {
+            monoCells.push({ c: antennaC, r: antennaR, ch: "│" });
+            wallSet.add(`${antennaC},${antennaR}`);
           }
         }
-      }
-      return stars;
-    }
 
-    const STARS = makeStarfield();
-
-    function paintStarfieldWithTwinkle(monoGrid, t) {
-      for (const star of STARS) {
-        const b = 0.5 + 0.5 * Math.sin(t * 0.7 + star.phase);
-        let ch = " ";
-        if (star.baseChar === "*") {
-          if (b > 0.55) ch = "*";
-          else if (b > 0.25) ch = ".";
-          else ch = " ";
-        } else {
-          ch = (b > 0.4) ? "." : " ";
+        // Roof variation: every 4th building gets "╤" mid-top
+        if (bi % 4 === 0 && width >= 4) {
+          const midC = colStart + Math.floor(width / 2);
+          monoCells.push({ c: midC, r: top, ch: "╤" });
         }
-        if (ch !== " ") monoGrid[star.r][star.c] = ch;
-      }
-    }
 
-    // -------------------------------------------------------------------------
-    // Backdrop — baked once, painted every frame
-    // -------------------------------------------------------------------------
-    function buildBackdrop() {
-      const grid = [];
-      for (let r = 0; r < H; r++) grid.push(new Array(W).fill(" "));
-
-      // Rows 0-2: empty above window
-      // Row 3: curved top of window
-      grid[3][10]  = "╭"; // ╭
-      for (let c = 11; c <= 129; c++) grid[3][c] = "─"; // ─
-      grid[3][130] = "╮"; // ╮
-
-      // Rows 4-21: vertical walls
-      for (let r = 4; r <= 21; r++) {
-        grid[r][10]  = "│"; // │
-        grid[r][130] = "│"; // │
-      }
-
-      // Row 22: curved bottom of window
-      grid[22][10]  = "╰"; // ╰
-      for (let c = 11; c <= 129; c++) grid[22][c] = "─"; // ─
-      grid[22][130] = "╯"; // ╯
-
-      // Row 23: horizontal balustrade
-      for (let c = 0; c < W; c++) {
-        grid[23][c] = (c % 6 === 0) ? "╪" : "═"; // ╪ or ═
-      }
-
-      // Rows 24-25: empty buffer
-
-      // Rows 26-39: floor grating with perspective
-      for (let r = 26; r < H; r++) {
-        for (let c = 0; c < W; c++) {
-          const gap = Math.max(2, 12 - (r - 26));
-          if (c % gap === 0) {
-            grid[r][c] = "│"; // │
-          } else if (r % 2 === 0) {
-            grid[r][c] = "─"; // ─
-          }
-          // else space
-        }
-      }
-
-      // Distant planet: partial ellipse at col=105, row=12, radius=5
-      // Crescent shape — right lit side only
-      const planetCx = 105, planetCy = 12;
-      const planetR = 5;
-      const planetChars = ["o", "b", "d", "p", "q"];
-      for (let r = -planetR; r <= planetR; r++) {
-        for (let c = -planetR; c <= planetR; c++) {
-          const nx = c / planetR;
-          const ny = r / (planetR * 0.5); // ellipse aspect
-          if (nx * nx + ny * ny <= 1.0) {
-            const pr = planetCy + r;
-            const pc = planetCx + c;
-            if (pr >= 4 && pr <= 21 && pc >= 11 && pc <= 129) {
-              // Use hash to pick dim chars for planet surface
-              const hi = hashFn(pc + 500, pr + 500);
-              const idx = Math.floor(hi * (planetChars.length - 1));
-              grid[pr][pc] = planetChars[idx];
+        // Window lights
+        for (let r = top + 1; r <= base - 1; r++) {
+          for (let c = colStart + 1; c <= colStart + width - 2; c++) {
+            const h = hashFn(c * 7, r * 13);
+            if (h < 0.10) {
+              const baseChar = h < 0.03 ? "·" : (h < 0.07 ? "." : ":");
+              const phase = hashFn(c, r) * Math.PI * 2;
+              yellowLights.push({ c, r, phase, baseChar });
             }
           }
         }
       }
 
-      return grid;
+      // Cap window lights at 220
+      const cappedLights = yellowLights.slice(0, 220);
+
+      // Ground horizon line at row 46
+      for (let c = 0; c < W; c++) {
+        monoCells.push({ c, r: 46, ch: "─" });
+      }
+
+      // Atmospheric haze (rows 40-45, non-wall cells)
+      for (let c = 0; c < 240; c++) {
+        for (let r = 40; r <= 45; r++) {
+          if (wallSet.has(`${c},${r}`)) continue;
+          const hh = hashFn(c, r * 3);
+          if (hh < 0.06) {
+            monoCells.push({ c, r, ch: hh < 0.02 ? "," : "." });
+          }
+        }
+      }
+
+      // Stars in rows 0..7
+      for (let r = 0; r <= 7; r++) {
+        for (let c = 0; c < W; c++) {
+          const h = (r * 131 + c * 17 + r * c * 3) % 137;
+          if (h === 0) stars.push({ c, r, baseChar: "*", phase: hashFn(c, r) * Math.PI * 2 });
+          else if (h < 3) stars.push({ c, r, baseChar: ".", phase: hashFn(c, r) * Math.PI * 2 });
+        }
+      }
+
+      return { monoCells, yellowLights: cappedLights, stars };
     }
 
-    const BACKDROP = buildBackdrop();
+    const CITYSCAPE = buildCityscape();
 
-    function paintBackdrop(monoGrid) {
-      for (let r = 0; r < H; r++) {
-        for (let c = 0; c < W; c++) {
-          if (BACKDROP[r][c] !== " ") monoGrid[r][c] = BACKDROP[r][c];
+    function paintCityscape(monoGrid) {
+      for (const cell of CITYSCAPE.monoCells) {
+        if (cell.r >= 0 && cell.r < H && cell.c >= 0 && cell.c < W) {
+          monoGrid[cell.r][cell.c] = cell.ch;
         }
       }
     }
+
+    function paintStars(monoGrid, t) {
+      for (const star of CITYSCAPE.stars) {
+        const b = 0.5 + 0.5 * Math.sin(t * 0.6 + star.phase);
+        let ch = " ";
+        if (star.baseChar === "*") {
+          if (b > 0.55) ch = "*";
+          else if (b > 0.25) ch = ".";
+        } else {
+          if (b > 0.4) ch = ".";
+        }
+        if (ch !== " " && monoGrid[star.r][star.c] === " ") {
+          monoGrid[star.r][star.c] = ch;
+        }
+      }
+    }
+
+    function paintWindowLights(yellowGrid, t) {
+      for (const light of CITYSCAPE.yellowLights) {
+        const b = 0.5 + 0.5 * Math.sin(t * 1.8 + light.phase);
+        if (b > 0.45) {
+          let ch = light.baseChar;
+          if (b > 0.85) {
+            if (ch === ".") ch = "o";
+            // `:` and `·` stay as-is for variety
+          }
+          yellowGrid[light.r][light.c] = ch;
+        }
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Aircraft trace — module-level state
+    // -------------------------------------------------------------------------
+    let aircraft = null;
+    let nextAircraftAt = 8.0;
+    let previousT = 0;
 
     // -------------------------------------------------------------------------
     // Saber rendering
@@ -520,11 +564,11 @@
     ];
 
     // -------------------------------------------------------------------------
-    // State that persists across frames within a beat (for smooth transitions)
+    // State that persists across frames within a beat
     // -------------------------------------------------------------------------
-    let quiGonPos = { x: 14, y: 22 };
-    let obiPos    = { x: 114, y: 22 };
-    let maulPos   = { x: 64,  y: 22 };
+    let quiGonPos = { x: 25, y: 60 };
+    let obiPos    = { x: 210, y: 60 };
+    let maulPos   = { x: 120, y: 60 };
 
     // -------------------------------------------------------------------------
     // EVENT_HANDLERS
@@ -533,13 +577,12 @@
 
       beat1_threeWay(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
         // Three characters face off
-        const maulX = 58, maulY = 22;
-        const quiX  = 14, quiY  = 22;
-        const obiX  = 105, obiY  = 22;
+        const maulX = 110, maulY = 60;
+        const quiX  = 25,  quiY  = 60;
+        const obiX  = 200, obiY  = 60;
 
         // Qui-Gon: green saber swinging left toward Maul
         overlaySprite(green, QUI_SWING, quiX - QUI_SWING.hilt.c, quiY - QUI_SWING.hilt.r);
-        // Green saber blade pointing right (toward Maul) at angle ~0
         const quiHiltX = quiX;
         const quiHiltY = quiY;
         const quiSaberLen = 14 + 0.3 * Math.sin(t * 18);
@@ -568,11 +611,9 @@
         for (const ct of clashTimes) {
           if (t >= ct && t < ct + clashDur) {
             const intensity = 1.0 - (t - ct) / clashDur;
-            // Clash between Qui-Gon and Maul: midpoint between hilt positions
             const clashX1 = Math.round((quiHiltX + maulHiltX) / 2);
             const clashY1 = Math.round((quiHiltY + maulHiltY) / 2);
             paintSaberClash(red, green, blue, clashX1, clashY1, intensity, { red: true, green: true });
-            // Clash between Obi-Wan and Maul
             const clashX2 = Math.round((obiHiltX + maulHiltX) / 2);
             const clashY2 = Math.round((obiHiltY + maulHiltY) / 2);
             paintSaberClash(red, green, blue, clashX2, clashY2, intensity, { red: true, blue: true });
@@ -584,62 +625,60 @@
       },
 
       beat2_pause(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
-        // Qui-Gon tweens (14,22)→(40,22) in first ~1/6th of beat (1s out of 6s)
-        const tween01 = Math.min(1.0, localT * 6.0); // 0→1 in first 1s
-        const quiX = Math.round(lerp(14, 40, easeOutCubic(tween01)));
-        const quiY = 22;
+        // Qui-Gon tweens 25→75 in first ~1/6th of beat (1s out of 6s)
+        const tween01 = Math.min(1.0, localT * 6.0);
+        const quiX = Math.round(lerp(25, 75, easeOutCubic(tween01)));
+        const quiY = 60;
 
         if (tween01 < 1.0) {
-          // Still moving: use QUI_SWING
           overlaySprite(green, QUI_SWING, quiX - QUI_SWING.hilt.c, quiY - QUI_SWING.hilt.r);
           const saberLen = 14 + 0.3 * Math.sin(t * 18);
           paintSaber(green, quiX, quiY, 0, saberLen);
         } else {
-          // Kneeling: QUI_KNEEL with green saber pointing up
           overlaySprite(green, QUI_KNEEL, quiX - QUI_KNEEL.hilt.c, quiY - QUI_KNEEL.hilt.r);
           const saberLen = 8 + 0.3 * Math.sin(t * 18);
           paintSaber(green, quiX, quiY, -Math.PI / 2, saberLen); // straight up
         }
 
-        // Maul paces 64→76→64 using MAUL_PACE
-        const paceT = (localT * 2) % 1.0; // oscillate
+        // Maul paces 120→140→120
+        const paceT = (localT * 2) % 1.0;
         const maulX = paceT < 0.5
-          ? Math.round(lerp(64, 76, easeInOutCubic(paceT * 2)))
-          : Math.round(lerp(76, 64, easeInOutCubic((paceT - 0.5) * 2)));
-        const maulY = 22;
+          ? Math.round(lerp(120, 140, easeInOutCubic(paceT * 2)))
+          : Math.round(lerp(140, 120, easeInOutCubic((paceT - 0.5) * 2)));
+        const maulY = 60;
         const goingRight = (localT * 2 % 1.0) < 0.5;
 
-        // Mirror MAUL_PACE based on direction
         const maulSprite = goingRight ? MAUL_PACE : mirrorSprite(MAUL_PACE);
         const maulHiltC = maulSprite.hilt ? maulSprite.hilt.c : MAUL_PACE.hilt.c;
         const maulHiltR = maulSprite.hilt ? maulSprite.hilt.r : MAUL_PACE.hilt.r;
         overlaySprite(red, maulSprite, maulX - maulHiltC, maulY - maulHiltR);
 
-        // Maul double-blade with idle hum
         const maulAngle = goingRight ? Math.PI * 0.15 : Math.PI * 0.85;
         const maulSaberLen = 10 + 0.3 * Math.sin(t * 18);
         paintSaber(red, maulX, maulY, maulAngle, maulSaberLen);
         paintSaber(red, maulX, maulY, maulAngle + Math.PI, maulSaberLen);
         paintMaulEmber(red, t, maulX, maulY);
 
-        // Obi-Wan at (100,22) idle with OBI_STANCE
-        const obiX = 100, obiY = 22;
+        // Obi-Wan at (190, 60) idle
+        const obiX = 190, obiY = 60;
         overlaySprite(blue, OBI_STANCE, obiX - OBI_STANCE.hilt.c, obiY - OBI_STANCE.hilt.r);
         const obiSaberLen = 10 + 0.3 * Math.sin(t * 18 + 2.0);
-        paintSaber(blue, obiX, obiY, Math.PI, obiSaberLen); // pointing left (toward Maul)
+        paintSaber(blue, obiX, obiY, Math.PI, obiSaberLen);
       },
 
       beat3_corridor(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
-        // Force-field bar at cols 92-94
-        for (let r = 4; r <= 28; r++) {
+        // Force-field bar at cols 170-172, rows 46..72
+        for (let r = 46; r <= 72; r++) {
           const ch = ((r + Math.floor(t * 4)) % 3 === 0) ? " " : "│";
-          if (92 >= 0 && 92 < W && r >= 0 && r < H) mono[r][92] = ch;
-          if (93 >= 0 && 93 < W && r >= 0 && r < H) mono[r][93] = ch;
-          if (94 >= 0 && 94 < W && r >= 0 && r < H) mono[r][94] = ch;
+          if (r >= 0 && r < H) {
+            mono[r][170] = ch;
+            mono[r][171] = ch;
+            mono[r][172] = ch;
+          }
         }
 
-        // Qui-Gon at (48,22) alternating QUI_SWING/QUI_STANCE each 0.5s
-        const quiX = 48, quiY = 22;
+        // Qui-Gon at (85, 60) alternating QUI_SWING/QUI_STANCE each 0.5s
+        const quiX = 85, quiY = 60;
         const quiSwinging = Math.floor(localT * 2) % 2 === 0;
         const quiSprite = quiSwinging ? QUI_SWING : QUI_STANCE;
         overlaySprite(green, quiSprite, quiX - quiSprite.hilt.c, quiY - quiSprite.hilt.r);
@@ -647,8 +686,8 @@
         const quiLen = 12 + 0.3 * Math.sin(t * 18);
         paintSaber(green, quiX, quiY, quiAngle, quiLen);
 
-        // Maul at (60,22) mirroring
-        const maulX = 60, maulY = 22;
+        // Maul at (110, 60)
+        const maulX = 110, maulY = 60;
         const maulAngle = Math.PI + Math.sin(t * 4) * 0.4;
         overlaySprite(red, MAUL_STANCE, maulX - MAUL_STANCE.hilt.c, maulY - MAUL_STANCE.hilt.r);
         const maulLen = 11 + 0.3 * Math.sin(t * 18);
@@ -656,13 +695,13 @@
         paintSaber(red, maulX, maulY, maulAngle + Math.PI, maulLen);
         paintMaulEmber(red, t, maulX, maulY);
 
-        // Obi-Wan stuck at (110,22) in OBI_STANCE
-        const obiX = 110, obiY = 22;
+        // Obi-Wan stuck at (200, 60) in OBI_STANCE
+        const obiX = 200, obiY = 60;
         overlaySprite(blue, OBI_STANCE, obiX - OBI_STANCE.hilt.c, obiY - OBI_STANCE.hilt.r);
         const obiLen = 10 + 0.3 * Math.sin(t * 18 + 2.0);
         paintSaber(blue, obiX, obiY, Math.PI, obiLen);
 
-        // Slow clash sparks every 1s in the middle (between Qui-Gon and Maul)
+        // Slow clash sparks every 1s
         const clashCycle = t % 1.0;
         if (clashCycle > 0.0 && clashCycle < 0.15) {
           const intensity = 0.5 * (1.0 - clashCycle / 0.15);
@@ -672,9 +711,9 @@
       },
 
       beat4_fall(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
-        const quiX = 48, quiY = 22;
-        const maulX = 60, maulY = 22;
-        const obiX = 110, obiY = 22;
+        const quiX = 90, quiY = 60;
+        const maulX = 110, maulY = 60;
+        const obiX = 200, obiY = 60;
 
         // Obi-Wan still trapped behind force field
         overlaySprite(blue, OBI_STANCE, obiX - OBI_STANCE.hilt.c, obiY - OBI_STANCE.hilt.r);
@@ -683,32 +722,27 @@
         if (localT < 0.4) {
           // Maul thrusts at Qui-Gon
           overlaySprite(red, MAUL_THRUST, maulX - MAUL_THRUST.hilt.c, maulY - MAUL_THRUST.hilt.r);
-          paintSaber(red, maulX - 4, maulY, Math.PI, 14);
-          paintMaulEmber(red, t, maulX - 4, maulY);
+          paintSaber(red, maulX - 6, maulY, Math.PI, 14);
+          paintMaulEmber(red, t, maulX - 6, maulY);
 
           // Qui-Gon still standing
           overlaySprite(green, QUI_STANCE, quiX - QUI_STANCE.hilt.c, quiY - QUI_STANCE.hilt.r);
           paintSaber(green, quiX, quiY, 0, 10);
 
-          // Contact at localT == 0.25: shake
           if (localT >= 0.25 && localT < 0.35) {
             stageFlags.shake = true;
           }
 
         } else {
-          // Qui-Gon collapses: morph STANCE→FALLEN
+          // Qui-Gon collapses
           const fallT = (localT - 0.4) / 0.6;
           if (fallT < 0.5) {
-            // Mid-fall
             overlaySprite(green, QUI_STANCE, quiX - QUI_STANCE.hilt.c, quiY - QUI_STANCE.hilt.r);
-            // Saber fading
             const saberFade = 1.0 - fallT * 2.0;
             const sLen = Math.round(10 * saberFade);
             if (sLen > 0) paintSaber(green, quiX, quiY, Math.PI / 6, sLen);
           } else {
-            // Fully fallen
             overlaySprite(green, QUI_FALLEN, quiX - 4, quiY - 4);
-            // Dust particles
             const dustT = (fallT - 0.5) * 2.0;
             const dustChars = [".", ",", "'", "."];
             for (let k = 0; k < 8; k++) {
@@ -734,7 +768,7 @@
       },
 
       beat5_rage(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
-        const maulX = 64, maulY = 22;
+        const maulX = 118, maulY = 60;
 
         // Maul
         overlaySprite(red, MAUL_STANCE, maulX - MAUL_STANCE.hilt.c, maulY - MAUL_STANCE.hilt.r);
@@ -743,19 +777,17 @@
         paintSaber(red, maulX, maulY, maulTheta + Math.PI, 11);
         paintMaulEmber(red, t, maulX, maulY);
 
-        // OBI_CHARGE tweens (110,22)→(64,22) over first 1s (localT 0→0.2 of 5s beat)
-        const chargeFrac = Math.min(1.0, localT * 5.0); // 0→1 in 1s of the 5s beat
-        const obiX = Math.round(lerp(110, 70, easeOutCubic(chargeFrac)));
-        const obiY = 22;
+        // Obi charges (210,60)→(126,60) over first 1s (localT 0→0.2 of 5s beat)
+        const chargeFrac = Math.min(1.0, localT * 5.0);
+        const obiX = Math.round(lerp(210, 126, easeOutCubic(chargeFrac)));
+        const obiY = 60;
 
         if (localT < 0.3) {
-          // Charging in
           overlaySprite(blue, OBI_CHARGE, obiX - OBI_CHARGE.hilt.c, obiY - OBI_CHARGE.hilt.r);
           const obiLen = 14 + 0.3 * Math.sin(t * 18);
           paintSaber(blue, obiX, obiY, Math.PI, obiLen);
         } else if (localT < 0.7) {
-          // Arrived — squaring off with Maul, OBI_STANCE facing left
-          const arrivedX = 70, arrivedY = 22;
+          const arrivedX = 126, arrivedY = 60;
           overlaySprite(blue, OBI_STANCE, arrivedX - OBI_STANCE.hilt.c, arrivedY - OBI_STANCE.hilt.r);
           const obiLen = 12 + 0.3 * Math.sin(t * 18);
           paintSaber(blue, arrivedX, arrivedY, Math.PI, obiLen);
@@ -768,56 +800,51 @@
           stageFlags.shake = true;
         }
 
-        // Kick: at t=21.5 (localT=0.7), Obi-Wan falls into pit via parabolic arc
+        // Kick: at localT=0.7, Obi falls into pit via arc — tween (126,60)→(122,71)
         if (localT >= 0.7 && localT < 0.9) {
-          // 1s kick window: localT goes 0.7→0.9 → subT 0→1
           const subT = (localT - 0.7) / 0.2;
-          const kickX = Math.round(lerp(70, 66, subT));
-          const kickY = Math.round(22 + 8 * easeInQuad(subT));
+          const kickX = Math.round(lerp(126, 122, subT));
+          const kickY = Math.round(60 + 11 * easeInQuad(subT));
           overlaySprite(blue, OBI_STANCE, kickX - OBI_STANCE.hilt.c, kickY - OBI_STANCE.hilt.r);
         }
 
-        // At localT >= 0.9: OBI_PIT at (66, 31)
+        // At localT >= 0.9: OBI_PIT at (122, 71)
         if (localT >= 0.9) {
-          overlaySprite(blue, OBI_PIT, 66 - OBI_PIT.hilt.c, 31 - OBI_PIT.hilt.r);
-          paintSaber(blue, 66, 31, -Math.PI / 4, 6); // saber held up dimly
+          overlaySprite(blue, OBI_PIT, 122 - OBI_PIT.hilt.c, 71 - OBI_PIT.hilt.r);
+          paintSaber(blue, 122, 71, -Math.PI / 4, 6);
         }
       },
 
       beat6_bisect(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
-        const maulX = 64, maulY = 22;
+        const maulX = 118, maulY = 60;
 
         if (localT < 0.4) {
-          // Parabolic Force-leap
-          // Arc: (66,31)→(66,18)→(66,22) — parabolic
+          // Parabolic Force-leap: (122,71)→(122,52)→(122,60)
           const leapT = localT / 0.4; // 0→1 over first 0.4
-          // y = 31 at start, dips to 18 at midpoint, lands at 22
-          const leapX = 66;
+          const leapX = 122;
           const leapY = Math.round(
             leapT < 0.5
-              ? lerp(31, 14, easeOutCubic(leapT * 2))
-              : lerp(14, 22, easeInCubic((leapT - 0.5) * 2))
+              ? lerp(71, 52, easeOutCubic(leapT * 2))
+              : lerp(52, 60, easeInCubic((leapT - 0.5) * 2))
           );
 
-          // Paint OBI_LEAP at current position
           overlaySprite(blue, OBI_LEAP, leapX - OBI_LEAP.hilt.c, leapY - OBI_LEAP.hilt.r);
           paintSaber(blue, leapX, leapY, -Math.PI / 2, 8); // saber overhead
 
-          // Ghost trail — 3 copies at past positions with dimmer chars
+          // Ghost trail
           const ghostOffsets = [0.06, 0.13, 0.20];
           const ghostDims = [
-            ["@", "#", ":"],   // slightly behind — medium dim
-            ["#", ":", "."],   // further behind
-            [":", ".", " "],   // furthest
+            ["@", "#", ":"],
+            ["#", ":", "."],
+            [":", ".", " "],
           ];
           for (let g = 0; g < ghostOffsets.length; g++) {
             const gT = Math.max(0, leapT - ghostOffsets[g]);
             const gY = Math.round(
               gT < 0.5
-                ? lerp(31, 14, easeOutCubic(gT * 2))
-                : lerp(14, 22, easeInCubic((gT - 0.5) * 2))
+                ? lerp(71, 52, easeOutCubic(gT * 2))
+                : lerp(52, 60, easeInCubic((gT - 0.5) * 2))
             );
-            // Paint dimmed ghost sprite
             const ghostDimMap = ghostDims[g];
             const ghostSprite = OBI_LEAP.map(row =>
               row.split("").map(c => {
@@ -843,8 +870,8 @@
         } else if (localT >= 0.4 && localT < 0.55) {
           // Blue blade fully extended overhead, white flash
           const flashT = (localT - 0.4) / 0.15;
-          overlaySprite(blue, OBI_LEAP, 66 - OBI_LEAP.hilt.c, 22 - OBI_LEAP.hilt.r);
-          paintSaber(blue, 66, 22, -Math.PI / 2, 12); // full saber overhead
+          overlaySprite(blue, OBI_LEAP, 122 - OBI_LEAP.hilt.c, 60 - OBI_LEAP.hilt.r);
+          paintSaber(blue, 122, 60, -Math.PI / 2, 12); // full saber overhead
 
           if (flashT > 0.3 && flashT < 0.8) {
             stageFlags.clashFlash = true;
@@ -857,22 +884,22 @@
 
         } else if (localT >= 0.55) {
           // Bisection!
-          const bisectT = (localT - 0.55) / 0.45; // 0→1 over remaining time
+          const bisectT = (localT - 0.55) / 0.45;
 
           // Obi-Wan victorious
           const obiSprite = bisectT > 0.3 ? OBI_STANCE : OBI_LEAP;
-          const obiSpriteX = 66 - obiSprite.hilt.c;
-          const obiSpriteY = 22 - obiSprite.hilt.r;
+          const obiSpriteX = 122 - obiSprite.hilt.c;
+          const obiSpriteY = 60 - obiSprite.hilt.r;
           overlaySprite(blue, obiSprite, obiSpriteX, obiSpriteY);
           const obiAngle = bisectT > 0.3 ? -Math.PI * 0.1 : -Math.PI / 2;
-          paintSaber(blue, 66, 22, obiAngle, 10);
+          paintSaber(blue, 122, 60, obiAngle, 10);
 
-          // Blue saber sweep horizontally at row 26 for first 0.3s after bisection
+          // Blue saber sweep horizontally at row 64
           if (bisectT < 0.3) {
             const sweepLen = Math.round(lerp(0, 20, bisectT / 0.3));
             for (let i = 0; i < sweepLen; i++) {
-              const sx = maulX - 10 + i;
-              if (sx >= 0 && sx < W) blue[26][sx] = "─";
+              const sx = maulX - 12 + i;
+              if (sx >= 0 && sx < W) blue[64][sx] = "─";
             }
           }
 
@@ -892,10 +919,11 @@
         for (let r = 0; r < H; r++) {
           for (let c = 0; c < W; c++) {
             if (hashFn(c, r) < localT) {
-              mono[r][c]  = " ";
-              red[r][c]   = " ";
-              green[r][c] = " ";
-              blue[r][c]  = " ";
+              mono[r][c]   = " ";
+              yellow[r][c] = " ";
+              red[r][c]    = " ";
+              green[r][c]  = " ";
+              blue[r][c]   = " ";
             }
           }
         }
@@ -935,9 +963,54 @@
       const green  = emptyGrid();
       const blue   = emptyGrid();
 
-      paintBackdrop(mono);
-      paintStarfieldWithTwinkle(mono, t);
+      // 1. Paint cityscape (buildings, horizon, haze)
+      paintCityscape(mono);
 
+      // 2. Paint twinkling stars (top 8 rows only)
+      paintStars(mono, t);
+
+      // 3. Paint window lights into yellow layer
+      paintWindowLights(yellow, t);
+
+      // 4. Aircraft trace logic
+      // Loop reset detection
+      if (t < 0.1 && previousT > 1.0) {
+        aircraft = null;
+        nextAircraftAt = 8.0;
+      }
+      previousT = t;
+
+      // Spawn / update aircraft
+      if (aircraft === null && t >= nextAircraftAt) {
+        const dirSeed = hashFn(Math.floor(t * 1000), 2);
+        aircraft = {
+          startT: t,
+          row: 9 + Math.floor(hashFn(Math.floor(t * 1000), 1) * 5),
+          dir: dirSeed < 0.5 ? 1 : -1,
+          duration: 4.5,
+        };
+        nextAircraftAt = t + 10 + hashFn(Math.floor(t * 1000), 3) * 6;
+      }
+      if (aircraft) {
+        const p = (t - aircraft.startT) / aircraft.duration;
+        if (p >= 1) {
+          aircraft = null;
+        } else {
+          const startX = aircraft.dir > 0 ? -4 : 244;
+          const endX   = aircraft.dir > 0 ? 244 : -4;
+          const x = lerp(startX, endX, p);
+          const traceChars = "·──·";
+          const baseX = Math.round(x);
+          for (let i = 0; i < 4; i++) {
+            const tx = baseX + i;
+            if (tx >= 0 && tx < W && mono[aircraft.row][tx] === " ") {
+              mono[aircraft.row][tx] = traceChars[i];
+            }
+          }
+        }
+      }
+
+      // 5. Walk TIMELINE, dispatch active EVENT_HANDLERS
       const stageFlags = { shake: false, clashFlash: false };
 
       for (const ev of TIMELINE) {
@@ -948,9 +1021,11 @@
         }
       }
 
+      // 6. Toggle CSS classes
       stageEl.classList.toggle("shake", stageFlags.shake);
       stageEl.classList.toggle("clash-flash", stageFlags.clashFlash);
 
+      // 7. Write all 5 grids to <pre> elements
       monoEl.textContent   = gridToString(mono);
       yellowEl.textContent = gridToString(yellow);
       redEl.textContent    = gridToString(red);
