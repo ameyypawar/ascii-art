@@ -9,156 +9,107 @@
       padding: 0;
       background: #000;
       color: #d8d8d8;
-      height: 100%;
+      min-height: 100vh;
       font-family: "Menlo", "Monaco", "Consolas", "Courier New", monospace;
     }
     body {
       display: flex;
       align-items: center;
       justify-content: center;
-      flex-direction: column;
       min-height: 100vh;
     }
-    #screen {
-      font-size: 18px;
-      line-height: 1.05;
+    .stage {
+      position: relative;
+      background: transparent;
+      will-change: transform;
+    }
+    .stage.clash-flash pre#mono { color: #1a1a1a; text-shadow: none; }
+    pre {
+      font-size: clamp(5px, calc(100vw / 250), 10px);
+      line-height: 1.0;
       letter-spacing: 0;
       white-space: pre;
       margin: 0;
-      padding: 24px 28px;
-      border: 1px solid #222;
-      border-radius: 6px;
-      background: #050505;
-      color: #f5f5f5;
-      text-shadow: 0 0 4px rgba(255, 255, 255, 0.15);
+      font-variant-ligatures: none;
+      font-feature-settings: "liga" 0, "calt" 0, "kern" 0;
+      font-variant-numeric: tabular-nums;
     }
-    #screen.flash {
-      color: #fff;
-      text-shadow: 0 0 10px #fff, 0 0 24px #88c0ff;
+    pre#mono {
+      color: #f0f0f0;
+      text-shadow: 0 0 3px rgba(255,255,255,0.10);
     }
-    .controls {
-      margin-top: 18px;
-      display: flex;
-      gap: 12px;
-    }
-    button {
-      background: #111;
+    pre#yellow {
+      position: absolute;
+      top: 0;
+      left: 0;
       color: #ffd24a;
-      border: 1px solid #ffd24a;
-      padding: 6px 14px;
-      font-family: inherit;
-      font-size: 13px;
-      letter-spacing: 0.05em;
-      cursor: pointer;
-      border-radius: 3px;
+      text-shadow: 0 0 4px #ffd24a, 0 0 10px #cc9900;
+      pointer-events: none;
     }
-    button:hover { background: #1a1a1a; }
-    .caption {
-      margin-top: 12px;
-      color: #666;
-      font-size: 12px;
-      letter-spacing: 0.08em;
+    pre#red {
+      position: absolute;
+      top: 0;
+      left: 0;
+      color: #ff2a2a;
+      text-shadow: 0 0 5px #ff2a2a, 0 0 14px #a00;
+      pointer-events: none;
     }
   </style>
 </head>
 <body>
-  <pre id="screen"></pre>
-  <div class="controls">
-    <button id="replay">REPLAY</button>
+  <div class="stage" id="stage">
+    <pre id="mono"></pre>
+    <pre id="yellow"></pre>
+    <pre id="red"></pre>
   </div>
-  <div class="caption">millennium falcon · hyperspace jump · 67×13</div>
 
   <script>
-    const W = 67;
-    const H = 13;
+    const W = 240;
+    const H = 80;
 
-    // 13 lines of starfield. Each line is W chars (we trim/pad below).
-    const STAR_ROWS = [
-      "  *    .         *         .       *       .         *      .     ",
-      ".         *          .             *          .       *         * ",
-      "     .         *          .       *        *       .       .      ",
-      ".    *      .       *        .          *      .         *       .",
-      "   *           .             *      .       *       .      *      ",
-      ".      *      .         *         .        *      .         *     ",
-      "     *      .       *          .       *       .       *      .   ",
-      ".        *         .       *           .       *        .        *",
-      "   *        .         *           .         *        .         *  ",
-      "      *        .        *        .       *          .        *    ",
-      ".         *       .         *         .         *         .       ",
-      "    *         .         *        .          *         .       *   ",
-      ".       *         .       *          .       *          .         ",
-    ].map(r => (r + " ".repeat(W)).slice(0, W));
-
-    // Falcon side-view sprite (4 rows, 18 cols). Spaces are transparent.
-    const FALCON = [
-      "       _____      ",
-      "    __/_____\\__   ",
-      "   /___________\\  ",
-      "       \\___/      ",
-    ];
-
-    function emptyStarfield() {
-      return STAR_ROWS.map(r => r.split(""));
+    // -------------------------------------------------------------------------
+    // Deterministic hash
+    // -------------------------------------------------------------------------
+    function hashFn(c, r) {
+      let h = (c * 2654435761 ^ r * 2246822519) >>> 0;
+      h = ((h ^ (h >>> 16)) * 0x45d9f3b) >>> 0;
+      h = ((h ^ (h >>> 16)) * 0x45d9f3b) >>> 0;
+      h = (h ^ (h >>> 16)) >>> 0;
+      return (h & 0xFFFF) / 0xFFFF;
     }
 
-    function overlaySprite(grid, sprite, x0, y0) {
-      for (let i = 0; i < sprite.length; i++) {
-        const row = sprite[i];
-        for (let j = 0; j < row.length; j++) {
-          const ch = row[j];
-          if (ch === " ") continue;
-          const r = y0 + i;
-          const c = x0 + j;
-          if (r >= 0 && r < H && c >= 0 && c < W) grid[r][c] = ch;
-        }
+    // -------------------------------------------------------------------------
+    // Character ramp — dark→light
+    // -------------------------------------------------------------------------
+    const RAMP = "@#&%$BMW8*okbdpqwOC0LXzxnuvjftlI:. ";
+
+    // -------------------------------------------------------------------------
+    // Tween library
+    // -------------------------------------------------------------------------
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const easeInCubic    = t => t * t * t;
+    const easeOutCubic   = t => 1 - Math.pow(1 - t, 3);
+    const easeInOutCubic = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const easeInQuad     = t => t * t;
+    const easeOutBack    = t => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2);
+
+    function applyEase(name, t) {
+      switch (name) {
+        case "easeInCubic":    return easeInCubic(t);
+        case "easeOutCubic":   return easeOutCubic(t);
+        case "easeInOutCubic": return easeInOutCubic(t);
+        case "easeInQuad":     return easeInQuad(t);
+        case "easeOutBack":    return easeOutBack(t);
+        default:               return t;
       }
     }
 
-    function overlayText(grid, text, x0, y0) {
-      for (let j = 0; j < text.length; j++) {
-        const c = x0 + j;
-        if (c >= 0 && c < W) grid[y0][c] = text[j];
-      }
-    }
-
-    function drawEngineTrail(grid, falconX, falconY, length, ch) {
-      // engines sit behind the falcon (trailing to the right since it's flying left)
-      const trailRow = falconY + 2; // middle of falcon
-      const start = falconX + FALCON[0].length;
-      for (let i = 0; i < length; i++) {
-        const c = start + i;
-        if (c >= 0 && c < W) grid[trailRow][c] = ch;
-      }
-    }
-
-    function hyperspaceStreaks(level) {
-      // level 1 -> short streaks "--", level 2 -> longer "-----", level 3 -> full lines
+    // -------------------------------------------------------------------------
+    // Grid helpers
+    // -------------------------------------------------------------------------
+    function emptyGrid() {
       const grid = [];
-      const lengths = [0, 3, 6, 14];
-      const L = lengths[level] || 0;
-      for (let r = 0; r < H; r++) {
-        const row = new Array(W).fill(" ");
-        // pick a starting col based on row parity for variety
-        const offset = (r * 7 + level * 3) % 11;
-        for (let c = 0; c < W; c++) {
-          if ((c + offset) % 13 === 0) {
-            for (let k = 0; k < L && c + k < W; k++) row[c + k] = "-";
-          }
-        }
-        grid.push(row);
-      }
-      return grid;
-    }
-
-    function flashFrame() {
-      const grid = [];
-      for (let r = 0; r < H; r++) {
-        const row = new Array(W).fill(" ");
-        for (let c = 0; c < W; c++) {
-          row[c] = "-";
-        }
-        grid.push(row);
-      }
+      for (let r = 0; r < H; r++) grid.push(new Array(W).fill(" "));
       return grid;
     }
 
@@ -166,107 +117,416 @@
       return grid.map(r => r.join("")).join("\n");
     }
 
-    // Build the animation as a list of [delayMs, contentString, flash?] entries.
-    function buildFrames() {
-      const frames = [];
-
-      // 1. Title card #1
-      {
-        const g = emptyStarfield();
-        overlayText(g, "A long time ago in a galaxy", 19, 5);
-        overlayText(g, "far, far away....",          24, 7);
-        frames.push([2200, gridToString(g)]);
+    function overlaySprite(grid, sprite, x0, y0) {
+      for (let i = 0; i < sprite.length; i++) {
+        const row = sprite[i];
+        for (let j = 0; j < row.length; j++) {
+          const ch = typeof row === "string" ? row[j] : row[j];
+          if (ch === " ") continue;
+          const r = y0 + i;
+          const cx = x0 + j;
+          if (r >= 0 && r < H && cx >= 0 && cx < W) grid[r][cx] = ch;
+        }
       }
-
-      // 2. Empty starfield (breath before action)
-      frames.push([1200, gridToString(emptyStarfield())]);
-
-      // 3-9. Falcon flies right-to-left
-      const positions = [52, 45, 38, 31, 24, 17, 12];
-      for (const x of positions) {
-        const g = emptyStarfield();
-        overlaySprite(g, FALCON, x, 4);
-        frames.push([550, gridToString(g)]);
-      }
-
-      // 10. Centered pause
-      {
-        const g = emptyStarfield();
-        overlaySprite(g, FALCON, 12, 4);
-        frames.push([900, gridToString(g)]);
-      }
-
-      // 11-12. Engines spool up
-      {
-        const g = emptyStarfield();
-        overlaySprite(g, FALCON, 12, 4);
-        drawEngineTrail(g, 12, 4, 4, "=");
-        frames.push([500, gridToString(g)]);
-      }
-      {
-        const g = emptyStarfield();
-        overlaySprite(g, FALCON, 12, 4);
-        drawEngineTrail(g, 12, 4, 10, "=");
-        frames.push([450, gridToString(g)]);
-      }
-      {
-        const g = emptyStarfield();
-        overlaySprite(g, FALCON, 12, 4);
-        drawEngineTrail(g, 12, 4, 18, ">");
-        frames.push([400, gridToString(g)]);
-      }
-
-      // 13-15. Hyperspace streaks (falcon still visible, streaks growing)
-      {
-        const g = hyperspaceStreaks(1);
-        overlaySprite(g, FALCON, 12, 4);
-        frames.push([350, gridToString(g)]);
-      }
-      {
-        const g = hyperspaceStreaks(2);
-        overlaySprite(g, FALCON, 12, 4);
-        frames.push([300, gridToString(g)]);
-      }
-      {
-        const g = hyperspaceStreaks(3);
-        overlaySprite(g, FALCON, 12, 4);
-        frames.push([280, gridToString(g)]);
-      }
-
-      // 16. Flash — falcon gone
-      frames.push([180, gridToString(flashFrame()), true]);
-
-      // 17. Settle to empty starfield
-      frames.push([1200, gridToString(emptyStarfield())]);
-
-      // 18. Closing line
-      {
-        const g = emptyStarfield();
-        overlayText(g, "The Force is with you.", 22, 6);
-        frames.push([2500, gridToString(g)]);
-      }
-
-      return frames;
     }
 
-    const FRAMES = buildFrames();
-    const screen = document.getElementById("screen");
+    // -------------------------------------------------------------------------
+    // Procedural Falcon renderer
+    // -------------------------------------------------------------------------
+    const LIGHT_DIR = { x: -0.55, y: -0.35, z: 0.75 };
 
-    let playing = false;
-    async function play() {
-      if (playing) return;
-      playing = true;
-      for (const [delay, content, flash] of FRAMES) {
-        screen.textContent = content;
-        screen.classList.toggle("flash", !!flash);
-        await new Promise(r => setTimeout(r, delay));
+    function renderFalcon(scale, lightDir) {
+      // Normalize light direction
+      const lLen = Math.sqrt(lightDir.x**2 + lightDir.y**2 + lightDir.z**2);
+      const lx = lightDir.x / lLen, ly = lightDir.y / lLen, lz = lightDir.z / lLen;
+
+      const horizR = scale;                                           // 18
+      const vertR  = Math.max(2, Math.round(scale * 0.30));          // ~5
+      const podHorizR = Math.max(2, Math.round(scale * 0.18));       // ~3
+      const podVertR  = Math.max(2, Math.round(scale * 0.10));       // ~2
+
+      const mandibleReach = 14;
+      const cols = 2 * horizR + mandibleReach + 4;                   // ~52
+      const rows = 2 * vertR + 4;                                    // ~14
+
+      // Saucer center within sprite buffer
+      const cx_s = mandibleReach + horizR + 1;
+      const cy_s = Math.floor(rows / 2);
+
+      // Cockpit offset (left and slightly up)
+      const dxc = -Math.round(horizR * 0.55);
+      const dyc = -Math.round(vertR * 0.70);
+      const cockpitCx = cx_s + dxc;
+      const cockpitCy = cy_s + dyc;
+
+      // Build sprite buffer (array of arrays)
+      const sprite = [];
+      for (let r = 0; r < rows; r++) sprite.push(new Array(cols).fill(" "));
+
+      // --- Saucer body (oblate spheroid) ---
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const nx = (c - cx_s) / horizR;
+          const ny = (r - cy_s) / vertR;
+          const d2 = nx * nx + ny * ny;
+          if (d2 > 1.0) continue;
+          const nz = Math.sqrt(1.0 - d2);
+          let b = Math.max(0, nx * lx + ny * ly + nz * lz);
+          b = Math.pow(b, 0.85);
+          b += (hashFn(c + scale * 100, r + scale * 100) - 0.5) * 0.04;
+          b = Math.max(0, Math.min(1, b));
+          // Equatorial darkening (thin hull seam)
+          if (Math.abs(ny) < 0.35 / vertR) b = Math.max(0, b - 0.10);
+          let idx = Math.floor((1.0 - b) * (RAMP.length - 1));
+          idx = Math.max(0, Math.min(RAMP.length - 1, idx));
+          sprite[r][c] = RAMP[idx];
+        }
       }
-      screen.classList.remove("flash");
-      playing = false;
+
+      // --- Cockpit pod (overpaints saucer) ---
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const nx = (c - cockpitCx) / podHorizR;
+          const ny = (r - cockpitCy) / podVertR;
+          const d2 = nx * nx + ny * ny;
+          if (d2 > 1.0) continue;
+          const nz = Math.sqrt(1.0 - d2);
+          let b = Math.max(0, nx * lx + ny * ly + nz * lz);
+          b = Math.pow(b, 0.85);
+          b += (hashFn(c + 7777, r + 7777) - 0.5) * 0.04;
+          b = Math.max(0, Math.min(1, b));
+          let idx = Math.floor((1.0 - b) * (RAMP.length - 1));
+          idx = Math.max(0, Math.min(RAMP.length - 1, idx));
+          sprite[r][c] = RAMP[idx];
+        }
+      }
+
+      // --- Mandibles — forward (left) of saucer ---
+      // Saucer left edge = cx_s - horizR
+      const saucerLeftEdge = cx_s - horizR;
+      const topMandibleRow = cy_s - 1;
+      const botMandibleRow = cy_s + 1;
+
+      // Top mandible
+      for (let c = 2; c < saucerLeftEdge; c++) {
+        if (c >= cols) continue;
+        let ch = " ";
+        if (c < saucerLeftEdge - 6) ch = "_";
+        else if (c < saucerLeftEdge - 3) ch = ",";
+        else ch = "=";
+        if (sprite[topMandibleRow][c] === " ") sprite[topMandibleRow][c] = ch;
+      }
+
+      // Bottom mandible
+      for (let c = 2; c < saucerLeftEdge; c++) {
+        if (c >= cols) continue;
+        let ch = " ";
+        if (c < saucerLeftEdge - 6) ch = "~";
+        else if (c < saucerLeftEdge - 3) ch = "`";
+        else ch = "=";
+        if (sprite[botMandibleRow][c] === " ") sprite[botMandibleRow][c] = ch;
+      }
+
+      // --- Engine ports: rear of saucer (right side since flying left) ---
+      const enginePorts = [
+        { c: cx_s + Math.round(horizR * 0.92), r: cy_s - 1 },
+        { c: cx_s + Math.round(horizR * 0.92), r: cy_s + 1 },
+      ];
+
+      sprite.width  = cols;
+      sprite.height = rows;
+      sprite.enginePorts = enginePorts;
+      sprite.cockpitCenter = { c: cockpitCx, r: cockpitCy };
+      sprite.cx = cx_s;
+      sprite.cy = cy_s;
+      sprite.horizR = horizR;
+      sprite.vertR  = vertR;
+      return sprite;
     }
 
-    document.getElementById("replay").addEventListener("click", play);
-    play();
+    const FALCON_SPRITE = renderFalcon(18, LIGHT_DIR);
+
+    // -------------------------------------------------------------------------
+    // Dim ghost copy of falcon for motion blur
+    // -------------------------------------------------------------------------
+    function renderFalconDim(sprite, dimRamp) {
+      // dimRamp: a subset of RAMP chars to use for dimming
+      // Returns a new sprite array with same dimensions but dimmer chars
+      const ghost = [];
+      for (let r = 0; r < sprite.length; r++) {
+        ghost.push(new Array(sprite[r].length).fill(" "));
+        for (let c = 0; c < sprite[r].length; c++) {
+          const ch = sprite[r][c];
+          if (ch === " ") continue;
+          // Map char to brightness, reduce it
+          const origIdx = RAMP.indexOf(ch);
+          if (origIdx < 0) { ghost[r][c] = "."; continue; }
+          // Push toward lighter (higher index = lighter)
+          const newIdx = Math.min(RAMP.length - 1, origIdx + 10);
+          ghost[r][c] = RAMP[newIdx];
+        }
+      }
+      ghost.width  = sprite.width;
+      ghost.height = sprite.height;
+      ghost.enginePorts   = sprite.enginePorts;
+      ghost.cockpitCenter = sprite.cockpitCenter;
+      ghost.cx = sprite.cx;
+      ghost.cy = sprite.cy;
+      ghost.horizR = sprite.horizR;
+      ghost.vertR  = sprite.vertR;
+      return ghost;
+    }
+
+    const FALCON_GHOST = renderFalconDim(FALCON_SPRITE, null);
+
+    // -------------------------------------------------------------------------
+    // Parallax starfield — two layers, built once at load
+    // -------------------------------------------------------------------------
+    function buildStars() {
+      const bg = [];
+      const fg = [];
+      for (let r = 0; r < H; r++) {
+        for (let c = 0; c < W; c++) {
+          // h1 === 0 gives ~147 bg stars at 240×80 (modulus 127)
+          const h1 = (r * 131 + c * 17 + r * c * 3) % 127;
+          // h2 === 0 gives ~48 fg stars at 240×80 (modulus 383)
+          const h2 = (r * 199 + c * 41 + r * c * 7) % 383;
+          if (h1 === 0) {
+            // Split bg into bright (·) vs dim (.) using secondary hash
+            const bright = hashFn(c * 3 + 1, r * 3 + 1) > 0.4;
+            bg.push({ c, r, baseChar: bright ? "·" : ".", phase: hashFn(c, r) * Math.PI * 2, vx: -2 });
+          }
+          if (h2 === 0)
+            fg.push({ c, r, baseChar: "*", phase: hashFn(c + 999, r + 999) * Math.PI * 2, vx: -5 });
+        }
+      }
+      return { bg, fg };
+    }
+    const STARS = buildStars();
+
+    // -------------------------------------------------------------------------
+    // Paint starfield — handles point and streak modes
+    // -------------------------------------------------------------------------
+    function paintStarfield(monoGrid, t, streakProgress) {
+      const maxLen = lerp(1, 50, easeInQuad(streakProgress));
+
+      const paintStar = (star, isForeground) => {
+        const scrolledX = ((star.c + Math.floor(star.vx * t)) % W + W) % W;
+
+        if (streakProgress < 0.01) {
+          // Point mode with twinkle
+          const b = 0.5 + 0.5 * Math.sin(t * 0.7 + star.phase);
+          let ch = " ";
+          if (star.baseChar === "*") {
+            if (b > 0.55) ch = "*";
+            else if (b > 0.25) ch = ".";
+          } else if (star.baseChar === "·") {
+            if (b > 0.5) ch = "·";
+          } else {
+            if (b > 0.4) ch = ".";
+          }
+          if (ch !== " " && monoGrid[star.r][scrolledX] === " ") {
+            monoGrid[star.r][scrolledX] = ch;
+          }
+        } else {
+          // Streak mode
+          const len = Math.max(1, Math.round(maxLen * (0.6 + 0.4 * hashFn(star.c, star.r))));
+          const ch = isForeground
+            ? (streakProgress > 0.6 ? "═" : "─")
+            : (streakProgress > 0.6 ? "─" : "-");
+          for (let k = 0; k < len; k++) {
+            const x = scrolledX - k;
+            if (x >= 0 && x < W && monoGrid[star.r][x] === " ") {
+              monoGrid[star.r][x] = ch;
+            }
+          }
+        }
+      };
+
+      for (const star of STARS.bg) paintStar(star, false);
+      for (const star of STARS.fg) paintStar(star, true);
+    }
+
+    // -------------------------------------------------------------------------
+    // Engine glow painter
+    // -------------------------------------------------------------------------
+    function paintEngineGlow(yellowGrid, t, falconState) {
+      if (!falconState.visible) return;
+      for (const port of FALCON_SPRITE.enginePorts) {
+        const c = falconState.x + port.c;
+        const r = falconState.y + port.r;
+
+        // Idle ember (always visible while falcon is present)
+        const emberLevel = 0.5 + 0.5 * Math.sin(t * 2.3) * Math.sin(t * 1.1);
+        const EMBER = [".", ",", ":", "o", "O", "@"];
+        const idx = Math.floor(Math.abs(emberLevel) * 5.99);
+        const ch = EMBER[Math.max(0, Math.min(5, idx))];
+        if (r >= 0 && r < H && c >= 0 && c < W) yellowGrid[r][c] = ch;
+
+        // Tail glow (right of port, extending behind ship)
+        const tailLen = falconState.tailLen || 0;
+        for (let k = 1; k <= tailLen; k++) {
+          const x = c + k;
+          if (x >= W) break;
+          const tailIntensity = 1.0 - k / tailLen;
+          let tailCh = " ";
+          if (tailIntensity > 0.8)      tailCh = ">";
+          else if (tailIntensity > 0.5) tailCh = "=";
+          else if (tailIntensity > 0.2) tailCh = "-";
+          else                          tailCh = ".";
+          if (r >= 0 && r < H && x >= 0 && x < W && yellowGrid[r][x] === " ") {
+            yellowGrid[r][x] = tailCh;
+          }
+        }
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Timeline
+    // -------------------------------------------------------------------------
+    const TOTAL = 15.0;
+
+    // Falcon sprite is ~52 cols wide; center it horizontally
+    const FALCON_HOME_X = Math.round((W - FALCON_SPRITE.width) / 2);  // ~94
+    const FALCON_Y      = Math.round((H - FALCON_SPRITE.height) / 2) - 4; // slightly upper-mid
+
+    const TIMELINE = [
+      { start:  0.0, end:  1.5, kind: "emptyStarfield",  ease: "linear"      },
+      { start:  1.5, end:  8.0, kind: "falconEnter",     ease: "easeOutCubic" },
+      { start:  8.0, end: 10.0, kind: "falconHold",      ease: "linear"       },
+      { start: 10.0, end: 11.5, kind: "enginesSpool",    ease: "easeInQuad"   },
+      { start: 11.5, end: 13.0, kind: "hyperspaceBuild", ease: "easeInQuad"   },
+      { start: 13.0, end: 13.5, kind: "flash",           ease: "linear"       },
+      { start: 13.5, end: 15.0, kind: "settle",          ease: "linear"       },
+    ];
+
+    // Module-level state reset at loop start
+    let streakProgress = 0;
+    let falconState    = { visible: false, x: W + 4, y: FALCON_Y, tailLen: 0 };
+
+    // -------------------------------------------------------------------------
+    // Event handlers
+    // -------------------------------------------------------------------------
+    const EVENT_HANDLERS = {
+      emptyStarfield(ev, t01, localT, t, mono, yellow, red, stageFlags) {
+        falconState.visible = false;
+      },
+
+      falconEnter(ev, t01, localT, t, mono, yellow, red, stageFlags) {
+        falconState.visible = true;
+        falconState.x       = Math.round(lerp(W + 4, FALCON_HOME_X, t01));
+        falconState.y       = FALCON_Y;
+        falconState.tailLen = 0;
+      },
+
+      falconHold(ev, t01, localT, t, mono, yellow, red, stageFlags) {
+        falconState.visible = true;
+        falconState.x       = FALCON_HOME_X;
+        falconState.y       = FALCON_Y;
+        falconState.tailLen = 0;
+      },
+
+      enginesSpool(ev, t01, localT, t, mono, yellow, red, stageFlags) {
+        falconState.visible = true;
+        falconState.x       = FALCON_HOME_X;
+        falconState.y       = FALCON_Y;
+        falconState.tailLen = Math.round(lerp(0, 14, t01));
+      },
+
+      hyperspaceBuild(ev, t01, localT, t, mono, yellow, red, stageFlags) {
+        falconState.visible = true;
+        falconState.x       = FALCON_HOME_X;
+        falconState.y       = FALCON_Y;
+        falconState.tailLen = 28;
+        streakProgress      = localT;
+
+        // Motion blur ghost copies — drawn to mono at x-2 and x-4
+        // We do this after the main falcon overlay in the frame loop,
+        // using the ghost sprite; flag them here
+        stageFlags.motionBlur = true;
+      },
+
+      flash(ev, t01, localT, t, mono, yellow, red, stageFlags) {
+        streakProgress      = 1;
+        falconState.visible = false;
+        stageFlags.flash    = true;
+      },
+
+      settle(ev, t01, localT, t, mono, yellow, red, stageFlags) {
+        falconState.visible = false;
+        streakProgress      = 0;
+      },
+    };
+
+    // -------------------------------------------------------------------------
+    // DOM elements
+    // -------------------------------------------------------------------------
+    const monoEl   = document.getElementById("mono");
+    const yellowEl = document.getElementById("yellow");
+    const redEl    = document.getElementById("red");
+    const stageEl  = document.getElementById("stage");
+
+    // -------------------------------------------------------------------------
+    // Render loop
+    // -------------------------------------------------------------------------
+    let loopStart = null;
+
+    function frame(ts) {
+      requestAnimationFrame(frame);
+
+      if (document.hidden) { loopStart = null; return; }
+      if (loopStart === null) loopStart = ts;
+
+      let t = (ts - loopStart) / 1000;
+      if (t > TOTAL) { loopStart = ts; t = 0; }
+
+      // --- 1. Reset per-frame state ---
+      streakProgress = 0;
+      falconState.visible = false;
+      falconState.tailLen = 0;
+
+      const mono   = emptyGrid();
+      const yellow = emptyGrid();
+      const red    = emptyGrid();
+
+      const stageFlags = { flash: false, motionBlur: false };
+
+      // --- 2. Walk TIMELINE → dispatch event handlers (sets streakProgress + falconState) ---
+      for (const ev of TIMELINE) {
+        if (t >= ev.start && t < ev.end) {
+          const localT = (t - ev.start) / (ev.end - ev.start);
+          const t01    = applyEase(ev.ease, localT);
+          EVENT_HANDLERS[ev.kind](ev, t01, localT, t, mono, yellow, red, stageFlags);
+        }
+      }
+
+      // --- 3. Paint starfield with final streakProgress set by handlers ---
+      paintStarfield(mono, t, streakProgress);
+
+      // --- 5. Paint motion blur ghost before main falcon ---
+      if (stageFlags.motionBlur && falconState.visible) {
+        overlaySprite(mono, FALCON_GHOST, falconState.x - 4, falconState.y);
+        overlaySprite(mono, FALCON_GHOST, falconState.x - 2, falconState.y);
+      }
+
+      // --- 6. Overlay Falcon sprite ---
+      if (falconState.visible) {
+        overlaySprite(mono, FALCON_SPRITE, falconState.x, falconState.y);
+      }
+
+      // --- 7. Engine glow ---
+      paintEngineGlow(yellow, t, falconState);
+
+      // --- 8. Stage CSS flags ---
+      stageEl.classList.toggle("clash-flash", stageFlags.flash);
+
+      // --- 9. Write to DOM ---
+      monoEl.textContent   = gridToString(mono);
+      yellowEl.textContent = gridToString(yellow);
+      redEl.textContent    = gridToString(red);
+    }
+
+    requestAnimationFrame(frame);
   </script>
 </body>
 </html>
