@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Duel of the Fates — Sith Wins — ASCII Lightsaber Battle</title>
+  <title>Duel of the Fates — ASCII Lightsaber Battle</title>
   <style>
     html, body {
       margin: 0;
@@ -94,8 +94,6 @@
   <script>
     const W = 140;
     const H = 40;
-    // Action zone: cols 0-105. Text zone: cols 110-139.
-    const ACTION_W = 106;
 
     // -------------------------------------------------------------------------
     // Deterministic hash
@@ -147,8 +145,6 @@
       return grid.map(r => r.join("")).join("\n");
     }
 
-    function copyGrid(g) { return g.map(row => row.slice()); }
-
     function overlaySprite(grid, sprite, x0, y0) {
       for (let i = 0; i < sprite.length; i++) {
         const row = typeof sprite[i] === "string" ? sprite[i] : sprite[i].join("");
@@ -179,6 +175,121 @@
       const out = s.map(row => row.split("").reverse().map(c => c === "/" ? "\\" : c === "\\" ? "/" : c).join(""));
       out.hilt = s.hilt ? { c: s[0].length - 1 - s.hilt.c, r: s.hilt.r } : undefined;
       return out;
+    }
+
+    // -------------------------------------------------------------------------
+    // Starfield — gated to window region (cols 11..129, rows 4..21)
+    // -------------------------------------------------------------------------
+    function makeStarfield() {
+      const stars = [];
+      for (let r = 4; r <= 21; r++) {
+        for (let c = 11; c <= 129; c++) {
+          const h = (r * 131 + c * 17 + r * c * 3) % 97;
+          let baseChar = " ";
+          if (h === 0) baseChar = "*";
+          else if (h < 4) baseChar = ".";
+          if (baseChar !== " ") {
+            stars.push({ c, r, baseChar, phase: hashFn(c, r) * Math.PI * 2 });
+          }
+        }
+      }
+      return stars;
+    }
+
+    const STARS = makeStarfield();
+
+    function paintStarfieldWithTwinkle(monoGrid, t) {
+      for (const star of STARS) {
+        const b = 0.5 + 0.5 * Math.sin(t * 0.7 + star.phase);
+        let ch = " ";
+        if (star.baseChar === "*") {
+          if (b > 0.55) ch = "*";
+          else if (b > 0.25) ch = ".";
+          else ch = " ";
+        } else {
+          ch = (b > 0.4) ? "." : " ";
+        }
+        if (ch !== " ") monoGrid[star.r][star.c] = ch;
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Backdrop — baked once, painted every frame
+    // -------------------------------------------------------------------------
+    function buildBackdrop() {
+      const grid = [];
+      for (let r = 0; r < H; r++) grid.push(new Array(W).fill(" "));
+
+      // Rows 0-2: empty above window
+      // Row 3: curved top of window
+      grid[3][10]  = "╭"; // ╭
+      for (let c = 11; c <= 129; c++) grid[3][c] = "─"; // ─
+      grid[3][130] = "╮"; // ╮
+
+      // Rows 4-21: vertical walls
+      for (let r = 4; r <= 21; r++) {
+        grid[r][10]  = "│"; // │
+        grid[r][130] = "│"; // │
+      }
+
+      // Row 22: curved bottom of window
+      grid[22][10]  = "╰"; // ╰
+      for (let c = 11; c <= 129; c++) grid[22][c] = "─"; // ─
+      grid[22][130] = "╯"; // ╯
+
+      // Row 23: horizontal balustrade
+      for (let c = 0; c < W; c++) {
+        grid[23][c] = (c % 6 === 0) ? "╪" : "═"; // ╪ or ═
+      }
+
+      // Rows 24-25: empty buffer
+
+      // Rows 26-39: floor grating with perspective
+      for (let r = 26; r < H; r++) {
+        for (let c = 0; c < W; c++) {
+          const gap = Math.max(2, 12 - (r - 26));
+          if (c % gap === 0) {
+            grid[r][c] = "│"; // │
+          } else if (r % 2 === 0) {
+            grid[r][c] = "─"; // ─
+          }
+          // else space
+        }
+      }
+
+      // Distant planet: partial ellipse at col=105, row=12, radius=5
+      // Crescent shape — right lit side only
+      const planetCx = 105, planetCy = 12;
+      const planetR = 5;
+      const planetChars = ["o", "b", "d", "p", "q"];
+      for (let r = -planetR; r <= planetR; r++) {
+        for (let c = -planetR; c <= planetR; c++) {
+          const nx = c / planetR;
+          const ny = r / (planetR * 0.5); // ellipse aspect
+          if (nx * nx + ny * ny <= 1.0) {
+            const pr = planetCy + r;
+            const pc = planetCx + c;
+            if (pr >= 4 && pr <= 21 && pc >= 11 && pc <= 129) {
+              // Use hash to pick dim chars for planet surface
+              const hi = hashFn(pc + 500, pr + 500);
+              const idx = Math.floor(hi * (planetChars.length - 1));
+              grid[pr][pc] = planetChars[idx];
+            }
+          }
+        }
+      }
+
+      return grid;
+    }
+
+    const BACKDROP = buildBackdrop();
+
+    function paintBackdrop(monoGrid) {
+      for (let r = 0; r < H; r++) {
+        for (let c = 0; c < W; c++) {
+          if (BACKDROP[r][c] !== " ") monoGrid[r][c] = BACKDROP[r][c];
+        }
+      }
     }
 
     // -------------------------------------------------------------------------
@@ -219,488 +330,168 @@
     }
 
     // -------------------------------------------------------------------------
-    // Sprites — 14 cols × 30 rows each
+    // Sprites — each is an array of 9 strings (12 chars wide where applicable)
     // hilt property marks the hilt position {c, r} within the sprite
     // -------------------------------------------------------------------------
 
-    // DARTH MAUL — 14 wide x 30 tall
+    // DARTH MAUL
     const MAUL_STANCE = [
-      "      /\\/\\      ",
-      "     /MM@@\\     ",
-      "    /@MM@@\\\\    ",
-      "   /@@@@@@@\\    ",
-      "   |#@==@#|\\    ",
-      "   |#:##:#| \\   ",
-      "   |##@@##|  \\  ",
-      "    \\######/    ",
-      "     \\%@@%/     ",
-      "     /@@@@\\     ",
-      "    /@@/\\@@\\    ",
-      "   /@@/  \\@@\\   ",
-      "   |##|  |##|   ",
-      "   |%%|  |%%|   ",
-      "   |%%|  |%%|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   /##\\  /##\\   ",
-      "   ####  ####   ",
-      "   ####  ####   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |%%|  |%%|   ",
-      "   |%%|  |%%|   ",
-      "   /##\\  /##\\   ",
-      "  &&&&    &&&&  ",
-      "                ",
+      "    ,@@.    ",
+      "   #@MM@#   ",
+      "   #@@@@#   ",
+      "  ##@@@@##  ",
+      "   #@==@#   ",
+      "    @@@@    ",
+      "    #@@#    ",
+      "   ## ##    ",
+      "  &&   &&   ",
     ];
-    MAUL_STANCE.hilt = { c: 12, r: 10 };
+    MAUL_STANCE.hilt = { c: 6, r: 4 };
 
     const MAUL_SWING = [
-      "      /\\/\\      ",
-      "     /MM@@\\     ",
-      "    /@MM@@\\\\    ",
-      "   /@@@@@@@\\    ",
-      "   |#@==@#|\\    ",
-      "   |#:##:#| \\   ",
-      "   |##@@##|  \\  ",
-      "    \\######/    ",
-      "    \\######=### ",
-      "     \\%@@%/  =  ",
-      "     /@@@@\\     ",
-      "   /@@/  \\@@\\   ",
-      "   |##|  |##|   ",
-      "   |%%|  |%%|   ",
-      "   |%%|  |%%|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   /##\\  /##\\   ",
-      "   ####  ####   ",
-      "   ####  ####   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |%%|  |%%|   ",
-      "   |%%|  |%%|   ",
-      "   /##\\  /##\\   ",
-      "  &&&&    &&&&  ",
-      "                ",
+      "    ,@@.    ",
+      "   #@MM@#   ",
+      "   #@@@@##= ",
+      "  ##@@@@#   ",
+      "    @@@@    ",
+      "   #@@@@#   ",
+      "    @@@@    ",
+      "   ## ##    ",
+      "  &&   &&   ",
     ];
-    MAUL_SWING.hilt = { c: 13, r: 9 };
+    MAUL_SWING.hilt = { c: 9, r: 2 };
 
     const MAUL_PACE = [
-      "      /\\/\\      ",
-      "     /MM@@\\     ",
-      "    /@MM@@\\\\    ",
-      "   /@@@@@@@\\    ",
-      "   |#@==@#|\\    ",
-      "   |#:##:#| \\   ",
-      "   |##@@##|  \\  ",
-      "    \\######/    ",
-      "     \\%@@%/     ",
-      "     /@@@@\\     ",
-      "    /@@/\\@@\\    ",
-      "   /@@/  \\@@\\   ",
-      "   |##|  |##|   ",
-      "   |%%|  |%%|   ",
-      "   |%%|  |%%|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   /##\\  /##\\   ",
-      "   ####  ####   ",
-      "  ####    ####  ",
-      "  |##|    |##|  ",
-      "  |##|    |##|  ",
-      "   |%%|  |%%|   ",
-      "   |%%|  |%%|   ",
-      "   /##\\  /##\\   ",
-      "  &&&      &&&  ",
-      "                ",
+      "    ,@@.    ",
+      "   #@MM@#   ",
+      "   #@@@@#   ",
+      "   #@@@@#   ",
+      " =#@@@@##   ",
+      "   #@@@@    ",
+      "   ##@@#    ",
+      "    # ##    ",
+      "   &&  &&   ",
     ];
-    MAUL_PACE.hilt = { c: 12, r: 10 };
+    MAUL_PACE.hilt = { c: 2, r: 4 };
 
     const MAUL_THRUST = [
-      "      /\\/\\      ",
-      "     /MM@@\\     ",
-      "    /@MM@@\\\\    ",
-      "   /@@@@@@@\\    ",
-      "   |#@==@#|\\    ",
-      "   |#:##:#| \\   ",
-      "   |##@@##|  \\  ",
-      "    \\######/    ",
-      "     \\%@@%/     ",
-      "     /@@@@\\=    ",
-      "    /@@/\\@@\\=== ",
-      "   /@@/  \\@@\\   ",
-      "   |##|  |##|   ",
-      "   |%%|  |%%|   ",
-      "   |%%|  |%%|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   /##\\  /##\\   ",
-      "   ####  ####   ",
-      "   ####  ####   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |%%|  |%%|   ",
-      "   |%%|  |%%|   ",
-      "   /##\\  /##\\   ",
-      "  &&&&    &&&&  ",
-      "                ",
+      "  ,@@.      ",
+      " #@MM@#     ",
+      " #@@@@#####=",
+      " #@@@@####= ",
+      " ##@@@@     ",
+      "  @@@@      ",
+      "  ##@#      ",
+      "  ## ##     ",
+      " &&    &&   ",
     ];
-    MAUL_THRUST.hilt = { c: 13, r: 9 };
+    MAUL_THRUST.hilt = { c: 11, r: 3 };
 
-    const MAUL_VICTORIOUS = [
-      "      /\\/\\      ",
-      "     /MM@@\\     ",
-      "    /@MM@@\\\\    ",
-      "   \\\\#@@@#//    ",
-      "    \\\\#==#//    ",
-      "     \\\\@@//     ",
-      "      \\##/      ",
-      "      /##\\      ",
-      "     /####\\     ",
-      "    /######\\    ",
-      "   /########\\   ",
-      "  /##########\\  ",
-      "   |########|   ",
-      "   |%%####%%|   ",
-      "   |%%####%%|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   /##\\  /##\\   ",
-      "   ####  ####   ",
-      "   ####  ####   ",
-      "   |##|  |##|   ",
-      "   |##|  |##|   ",
-      "   |%%|  |%%|   ",
-      "   |%%|  |%%|   ",
-      "   /##\\  /##\\   ",
-      "  &&&&    &&&&  ",
-      "                ",
-    ];
-    MAUL_VICTORIOUS.hilt = { c: 6, r: 5 };
-
-    // QUI-GON JINN — 14 wide x 30 tall
+    // QUI-GON JINN
     const QUI_STANCE = [
-      "     ,@@@.      ",
-      "    /@MMMM\\     ",
-      "   /@@@@@@\\     ",
-      "   |#@##@#|     ",
-      "   |##@@##|     ",
-      "   /########\\   ",
-      "  /##|  |##\\\\   ",
-      "  ##|    |##\\   ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|====|##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  /##|   |##\\   ",
-      " /###|   |###\\  ",
-      "/####|   |####\\ ",
-      "&&&&&     &&&&& ",
-      "                ",
+      "   ,@@.   = ",
+      "  #@MM@#==  ",
+      "  #@@@@#    ",
+      " ##@@@@##   ",
+      "   @@@@     ",
+      "  #@@@@#    ",
+      "   @@@@     ",
+      "   ## ##    ",
+      "  &&   &&   ",
     ];
-    QUI_STANCE.hilt = { c: 8, r: 12 };
+    QUI_STANCE.hilt = { c: 10, r: 0 };
 
     const QUI_SWING = [
-      "     ,@@@.      ",
-      "    /@MMMM\\     ",
-      "   /@@@@@@\\     ",
-      "   |#@##@#|     ",
-      "   |##@@##|     ",
-      "   /########\\   ",
-      "  /##|  |##\\\\   ",
-      "  ##|    |##\\   ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|====|##=== ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  /##|   |##\\   ",
-      " /###|   |###\\  ",
-      "/####|   |####\\ ",
-      "&&&&&     &&&&& ",
-      "                ",
+      "   ,@@.     ",
+      "  #@MM@#    ",
+      "= #@@@@#    ",
+      " ##@@@@##   ",
+      "   @@@@     ",
+      "  #@@@@#    ",
+      "   @@@@     ",
+      "   ## ##    ",
+      "  &&   &&   ",
     ];
-    QUI_SWING.hilt = { c: 13, r: 12 };
+    QUI_SWING.hilt = { c: 1, r: 2 };
 
     const QUI_KNEEL = [
-      "                ",
-      "     ,@@@.      ",
-      "    /@MMMM\\     ",
-      "   /@@@@@@\\     ",
-      "   |#@##@#|     ",
-      "   |##@@##|     ",
-      "   /########\\   ",
-      "  /##|  |##\\\\   ",
-      "  ##|    |##\\   ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|====|##    ",
-      "  ##|    |##    ",
-      "  ##|    |##=   ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##\\    /##    ",
-      "   ##\\  /##     ",
-      "    \\##/        ",
-      "    /##\\        ",
-      "   /####\\       ",
-      "  /######\\      ",
-      "  \\######/      ",
-      "   \\####/       ",
-      "   &&&&&&       ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
+      "            ",
+      "    ,@@.    ",
+      "   #@MM@#   ",
+      "   #@@@@#=  ",
+      "  ##@@@@##  ",
+      "   @@@@@    ",
+      "  #@@@@@#   ",
+      "  ## & ##   ",
+      " &&&&&&&&&& ",
     ];
-    QUI_KNEEL.hilt = { c: 11, r: 14 };
+    QUI_KNEEL.hilt = { c: 9, r: 3 };
 
     const QUI_FALLEN = [
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "        ,@@.    ",
-      "       /MM@@\\   ",
-      "   .,@@@@@@@@@,.",
-      "  /##########\\\\ ",
-      " /############\\ ",
-      "  &&&&&&&&&&&&  ",
-      "                ",
-      "                ",
+      "            ",
+      "            ",
+      "            ",
+      "            ",
+      "            ",
+      "   .,@@,.   ",
+      "  #@@@@@@#  ",
+      " ##@@@@@@## ",
+      " ###@@@@#==  ",
     ];
-    QUI_FALLEN.hilt = { c: 10, r: 26 };
+    QUI_FALLEN.hilt = { c: 10, r: 8 };
 
-    // OBI-WAN KENOBI — 14 wide x 30 tall
+    // OBI-WAN KENOBI
     const OBI_STANCE = [
-      "     ,@@@.      ",
-      "    /@MMMM\\     ",
-      "   /@@@@@@\\     ",
-      "   |#@##@#|     ",
-      "   |##@@##|     ",
-      "  /########\\    ",
-      " /##|  |##\\\\    ",
-      " ##|    |##\\    ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|====|##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " /##|   |##\\    ",
-      "/###|   |###\\   ",
-      "####|   |####   ",
-      "&&&&&    &&&&   ",
-      "                ",
+      "    ,@@.    ",
+      "   #@MM@#   ",
+      "   #@@@@#   ",
+      "  ##@@@@##  ",
+      " =#@@@@     ",
+      "   #@@@@#   ",
+      "    @@@@    ",
+      "   ## ##    ",
+      "  &&   &&   ",
     ];
-    OBI_STANCE.hilt = { c: 5, r: 12 };
+    OBI_STANCE.hilt = { c: 1, r: 4 };
 
     const OBI_CHARGE = [
-      "     ,@@@.      ",
-      "    /@MMMM\\     ",
-      "   /@@@@@@\\     ",
-      "   |#@##@#|     ",
-      "   |##@@##|     ",
-      "  /########\\    ",
-      " /##|  |##\\\\    ",
-      " ##|    |##\\    ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      "===##|  |##     ",
-      " ##|    |##     ",
-      " ##|====|##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " ##|    |##     ",
-      " /##|   |##\\    ",
-      "/###|   |###\\   ",
-      "####|   |####   ",
-      "&&&&&    &&&&   ",
-      "                ",
+      "  ,@@.      ",
+      " #@MM@#     ",
+      " #@@@@####= ",
+      " #@@@@###   ",
+      " ##@@@@     ",
+      "  @@@@#     ",
+      "   @@@@     ",
+      "   #  ##    ",
+      "  &&   &&&  ",
     ];
-    OBI_CHARGE.hilt = { c: 0, r: 10 };
+    OBI_CHARGE.hilt = { c: 10, r: 2 };
 
     const OBI_PIT = [
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "     ,@@@.      ",
-      "    /@MMMM\\     ",
-      "   /@@@@@@\\     ",
-      "   |#@##@#|=    ",
-      "   |##@@##|     ",
-      "  /########\\    ",
-      "  \\########/    ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
+      "            ",
+      "            ",
+      "            ",
+      "            ",
+      "    ,@@.    ",
+      "   #@MM@#   ",
+      "   #@@@@#=  ",
+      "   ##@@##   ",
+      "  &&    &&  ",
     ];
-    OBI_PIT.hilt = { c: 8, r: 16 };
+    OBI_PIT.hilt = { c: 9, r: 6 };
 
     const OBI_LEAP = [
-      "      ,@@@.     ",
-      "     /@MMMM\\    ",
-      "    /@@@@@@\\    ",
-      "   /########\\   ",
-      "  =##|  |##\\\\   ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  ##|    |##    ",
-      "  /##\\  /##\\    ",
-      "  ####  ####    ",
-      "  #  #  #  #    ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
+      "   ,@@.  =  ",
+      "  #@MM@#=   ",
+      "  #@@@@#    ",
+      " ##@@@@##   ",
+      "   @@@@     ",
+      "  #@@@@#    ",
+      "  ## ##     ",
+      "  #   #     ",
+      "            ",
     ];
-    OBI_LEAP.hilt = { c: 10, r: 4 };
-
-    const OBI_FALLEN = [
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "                ",
-      "   .,@@@@@@@@@,.",
-      "  /############\\",
-      " /##############",
-      "  &&&&&&&&&&&&  ",
-    ];
-    OBI_FALLEN.hilt = { c: 10, r: 27 };
+    OBI_LEAP.hilt = { c: 10, r: 0 };
 
     // -------------------------------------------------------------------------
     // Hilt ember for Maul — painted to red layer
@@ -716,192 +507,24 @@
     }
 
     // -------------------------------------------------------------------------
-    // Mustafar backdrop — baked once, static rocky ridge + pit
-    // -------------------------------------------------------------------------
-    function buildBackdrop() {
-      const grid = [];
-      for (let r = 0; r < H; r++) grid.push(new Array(W).fill(" "));
-
-      // Rocky ridge rows 32–37
-      for (let c = 0; c < ACTION_W; c++) {
-        if (hashFn(c, 0) > 0.7) grid[32][c] = "^";
-        if (hashFn(c, 1) > 0.5) grid[33][c] = (c % 2 === 0) ? "/" : "\\";
-        const rampDark = "@%&#";
-        for (let r = 34; r <= 37; r++) {
-          const hi = hashFn(c, r);
-          const idx = Math.floor(hi * rampDark.length);
-          grid[r][c] = rampDark[Math.max(0, Math.min(rampDark.length - 1, idx))];
-        }
-      }
-
-      // Cooled crust rows 38–39
-      const crustRamp = "&%#";
-      for (let c = 0; c < ACTION_W; c++) {
-        for (let r = 38; r <= 39; r++) {
-          const hi = hashFn(c + 200, r);
-          const idx = Math.floor(hi * crustRamp.length);
-          grid[r][c] = crustRamp[Math.max(0, Math.min(crustRamp.length - 1, idx))];
-        }
-      }
-
-      // Pit cutout: cols 64–69 rows 32–39 forced to space
-      for (let c = 64; c <= 69; c++) {
-        for (let r = 32; r <= 39; r++) {
-          grid[r][c] = " ";
-        }
-      }
-      // Pit walls: col 63 and 70 with │
-      for (let r = 32; r <= 39; r++) {
-        grid[r][63] = "│";
-        grid[r][70] = "│";
-      }
-
-      return grid;
-    }
-
-    const BACKDROP = buildBackdrop();
-
-    function paintBackdrop(monoGrid) {
-      for (let r = 0; r < H; r++) {
-        for (let c = 0; c < ACTION_W; c++) {
-          if (BACKDROP[r][c] !== " ") monoGrid[r][c] = BACKDROP[r][c];
-        }
-      }
-    }
-
-    // -------------------------------------------------------------------------
-    // Animated lava — Mustafar rows 25–31
-    // -------------------------------------------------------------------------
-    const LAVA_RAMP = ["~", "=", "%", "@", "&", "8", "W", "M"];
-
-    function paintMustafar(monoGrid, redGrid, yellowGrid, t) {
-      for (let r = 25; r <= 31; r++) {
-        for (let c = 0; c < ACTION_W; c++) {
-          const phase = hashFn(c, r) * 6.283;
-          const osc = 0.5 + 0.5 * Math.sin(t * 1.5 + phase);
-          const heat = osc * (1 - Math.abs(r - 28) / 4);
-          const idx = Math.floor(heat * (LAVA_RAMP.length - 1));
-          const ch = LAVA_RAMP[Math.max(0, Math.min(LAVA_RAMP.length - 1, idx))];
-          if (heat > 0.85) {
-            yellowGrid[r][c] = ch;
-          } else if (heat > 0.1) {
-            redGrid[r][c] = ch;
-          }
-        }
-      }
-      // Lava-haze rows 19–24 — dim red diffuse
-      for (let r = 19; r <= 24; r++) {
-        for (let c = 0; c < ACTION_W; c++) {
-          const phase = hashFn(c + 1000, r) * 6.283;
-          const osc = 0.5 + 0.5 * Math.sin(t * 0.8 + phase);
-          const haziness = osc * (1 - (r - 19) / 7);
-          if (haziness > 0.65) {
-            redGrid[r][c] = ".";
-          }
-        }
-      }
-    }
-
-    // -------------------------------------------------------------------------
-    // Ember particle system (lava embers floating up)
-    // -------------------------------------------------------------------------
-    let embers = [];
-
-    function spawnEmbers(t) {
-      const spawnCount = 3 + Math.floor(Math.random() * 3);
-      for (let i = 0; i < spawnCount; i++) {
-        if (embers.length >= 60) break;
-        embers.push({
-          x: Math.random() * ACTION_W,
-          y: 28 + Math.random() * 4,
-          vx: (Math.random() - 0.5) * 0.4,
-          vy: -(0.5 + Math.random() * 0.5),
-          birthT: t,
-          life: 2 + Math.random() * 2,
-        });
-      }
-    }
-
-    function updateAndPaintEmbers(t, redGrid, yellowGrid) {
-      embers = embers.filter(e => (t - e.birthT) < e.life);
-      for (const e of embers) {
-        const localT = (t - e.birthT) / e.life;
-        const elapsed = t - e.birthT;
-        const x = e.x + e.vx * elapsed * 4;
-        const y = e.y + e.vy * elapsed * 4;
-        const c = Math.round(x), r = Math.round(y);
-        if (c < 0 || c >= ACTION_W || r < 0 || r >= H) continue;
-        const chars = ["O", "o", "*", ".", " "];
-        const idx = Math.min(4, Math.floor(localT * 5));
-        const ch = chars[idx];
-        if (ch === " ") continue;
-        if (localT < 0.5) yellowGrid[r][c] = ch;
-        else redGrid[r][c] = ch;
-      }
-    }
-
-    // -------------------------------------------------------------------------
-    // Sky embers — sparse drifting upward embers in rows 0–18, cols 0–105
-    // -------------------------------------------------------------------------
-    const SKY_EMBER_SEEDS = (() => {
-      const seeds = [];
-      for (let i = 0; i < 30; i++) {
-        seeds.push({
-          x: Math.floor(hashFn(i, 999) * ACTION_W),
-          y: Math.floor(hashFn(i, 998) * 18),
-          phase: hashFn(i, 997) * Math.PI * 2,
-          speed: 0.3 + hashFn(i, 996) * 0.5,
-        });
-      }
-      return seeds;
-    })();
-
-    function paintSkyEmbers(redGrid, t) {
-      const skyChars = [",", ".", "'", ",", " "];
-      for (const s of SKY_EMBER_SEEDS) {
-        const drift = (t * s.speed) % 20;
-        const r = Math.round(((s.y - drift + 40) % 19));
-        if (r < 0 || r > 18) continue;
-        const c = Math.round((s.x + Math.sin(t * 0.3 + s.phase) * 2 + 200) % ACTION_W);
-        if (c < 0 || c >= ACTION_W) continue;
-        const blink = 0.5 + 0.5 * Math.sin(t * 1.2 + s.phase);
-        if (blink > 0.4) {
-          const ci = Math.floor(blink * 3.99) % skyChars.length;
-          redGrid[r][c] = skyChars[ci];
-        }
-      }
-    }
-
-    // -------------------------------------------------------------------------
-    // Text overlay — persistent tagline, always painted last
-    // -------------------------------------------------------------------------
-    const TEXT_LINES = [
-      { row: 18, col: 112, text: "merge conflicts," },
-      { row: 19, col: 112, text: "inspected at" },
-      { row: 20, col: 112, text: "workspace scope" },
-    ];
-
-    function paintTextOverlay(monoGrid) {
-      for (const line of TEXT_LINES) {
-        for (let i = 0; i < line.text.length; i++) {
-          const c = line.col + i;
-          if (c >= 0 && c < W) monoGrid[line.row][c] = line.text[i];
-        }
-      }
-    }
-
-    // -------------------------------------------------------------------------
     // TIMELINE
     // -------------------------------------------------------------------------
     const TIMELINE = [
-      { start: 0.0,  end: 5.0,  kind: "beat1_threeWay",    ease: "linear" },
-      { start: 5.0,  end: 11.0, kind: "beat2_pause",       ease: "easeInOutCubic" },
-      { start: 11.0, end: 16.0, kind: "beat3_corridor",    ease: "linear" },
-      { start: 16.0, end: 18.0, kind: "beat4_fall",        ease: "easeInQuad" },
-      { start: 18.0, end: 23.0, kind: "beat5_rage",        ease: "linear" },
-      { start: 23.0, end: 29.0, kind: "beat6_sithVictory", ease: "easeOutCubic" },
-      { start: 29.0, end: 30.0, kind: "reset",             ease: "linear" },
+      { start: 0.0,  end: 5.0,  kind: "beat1_threeWay",  ease: "linear" },
+      { start: 5.0,  end: 11.0, kind: "beat2_pause",     ease: "easeInOutCubic" },
+      { start: 11.0, end: 16.0, kind: "beat3_corridor",  ease: "linear" },
+      { start: 16.0, end: 18.0, kind: "beat4_fall",      ease: "easeInQuad" },
+      { start: 18.0, end: 23.0, kind: "beat5_rage",      ease: "linear" },
+      { start: 23.0, end: 29.0, kind: "beat6_bisect",    ease: "easeOutCubic" },
+      { start: 29.0, end: 30.0, kind: "reset",           ease: "linear" },
     ];
+
+    // -------------------------------------------------------------------------
+    // State that persists across frames within a beat (for smooth transitions)
+    // -------------------------------------------------------------------------
+    let quiGonPos = { x: 14, y: 22 };
+    let obiPos    = { x: 114, y: 22 };
+    let maulPos   = { x: 64,  y: 22 };
 
     // -------------------------------------------------------------------------
     // EVENT_HANDLERS
@@ -910,180 +533,182 @@
 
       beat1_threeWay(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
         // Three characters face off
-        // Qui-Gon at col 20, Maul at col 52, Obi-Wan at col 90
-        const maulX = 52, maulY = 5;
-        const quiX  = 20, quiY  = 5;
-        const obiX  = 90, obiY  = 5;
+        const maulX = 58, maulY = 22;
+        const quiX  = 14, quiY  = 22;
+        const obiX  = 105, obiY  = 22;
 
-        // Qui-Gon: green saber swinging right toward Maul
+        // Qui-Gon: green saber swinging left toward Maul
         overlaySprite(green, QUI_SWING, quiX - QUI_SWING.hilt.c, quiY - QUI_SWING.hilt.r);
+        // Green saber blade pointing right (toward Maul) at angle ~0
         const quiHiltX = quiX;
         const quiHiltY = quiY;
         const quiSaberLen = 14 + 0.3 * Math.sin(t * 18);
         paintSaber(green, quiHiltX, quiHiltY, 0, quiSaberLen);
 
-        // Obi-Wan: blue saber charging from right (mirrored)
-        const obiMirrored = mirrorSprite(OBI_CHARGE);
-        overlaySprite(blue, obiMirrored, obiX - obiMirrored.hilt.c, obiY - obiMirrored.hilt.r);
+        // Obi-Wan: blue saber charging from right
+        overlaySprite(blue, OBI_CHARGE, obiX - OBI_CHARGE.hilt.c, obiY - OBI_CHARGE.hilt.r);
         const obiHiltX = obiX;
         const obiHiltY = obiY;
-        const obiSaberLen = 14 + 0.3 * Math.sin(t * 18 + 1.5);
-        paintSaber(blue, obiHiltX, obiHiltY, Math.PI, obiSaberLen);
+        const obiSaberLen = 12 + 0.3 * Math.sin(t * 18 + 1.5);
+        paintSaber(blue, obiHiltX, obiHiltY, Math.PI, obiSaberLen); // pointing left
 
         // Maul: spinning double-blade
         const maulHiltX = maulX;
         const maulHiltY = maulY;
-        const baseAngle = Math.PI * 0.25;
+        const baseAngle = Math.PI * 0.25; // diagonal
         const theta = baseAngle + Math.sin(t * 6) * (Math.PI / 2);
         overlaySprite(red, MAUL_SWING, maulX - MAUL_SWING.hilt.c, maulY - MAUL_SWING.hilt.r);
-        const maulBladeLen = 14;
+        const maulBladeLen = 12;
         paintSaber(red, maulHiltX, maulHiltY, theta, maulBladeLen);
         paintSaber(red, maulHiltX, maulHiltY, theta + Math.PI, maulBladeLen);
 
-        // Clash sparks
+        // Clash sparks at t ∈ {1.0, 2.4, 4.0} for 150ms
         const clashTimes = [1.0, 2.4, 4.0];
         const clashDur = 0.15;
         for (const ct of clashTimes) {
           if (t >= ct && t < ct + clashDur) {
             const intensity = 1.0 - (t - ct) / clashDur;
+            // Clash between Qui-Gon and Maul: midpoint between hilt positions
             const clashX1 = Math.round((quiHiltX + maulHiltX) / 2);
-            const clashY1 = Math.round((quiHiltY + maulHiltY) / 2) + 12;
+            const clashY1 = Math.round((quiHiltY + maulHiltY) / 2);
             paintSaberClash(red, green, blue, clashX1, clashY1, intensity, { red: true, green: true });
+            // Clash between Obi-Wan and Maul
             const clashX2 = Math.round((obiHiltX + maulHiltX) / 2);
-            const clashY2 = Math.round((obiHiltY + maulHiltY) / 2) + 12;
+            const clashY2 = Math.round((obiHiltY + maulHiltY) / 2);
             paintSaberClash(red, green, blue, clashX2, clashY2, intensity, { red: true, blue: true });
             stageFlags.shake = true;
           }
         }
 
-        paintMaulEmber(red, t, maulHiltX, maulHiltY + 5);
+        paintMaulEmber(red, t, maulHiltX, maulHiltY);
       },
 
       beat2_pause(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
-        // Qui-Gon moves right then kneels
-        const tween01 = Math.min(1.0, localT * 6.0);
-        const quiX = Math.round(lerp(20, 35, easeOutCubic(tween01)));
-        const quiY = 5;
+        // Qui-Gon tweens (14,22)→(40,22) in first ~1/6th of beat (1s out of 6s)
+        const tween01 = Math.min(1.0, localT * 6.0); // 0→1 in first 1s
+        const quiX = Math.round(lerp(14, 40, easeOutCubic(tween01)));
+        const quiY = 22;
 
         if (tween01 < 1.0) {
+          // Still moving: use QUI_SWING
           overlaySprite(green, QUI_SWING, quiX - QUI_SWING.hilt.c, quiY - QUI_SWING.hilt.r);
           const saberLen = 14 + 0.3 * Math.sin(t * 18);
           paintSaber(green, quiX, quiY, 0, saberLen);
         } else {
+          // Kneeling: QUI_KNEEL with green saber pointing up
           overlaySprite(green, QUI_KNEEL, quiX - QUI_KNEEL.hilt.c, quiY - QUI_KNEEL.hilt.r);
           const saberLen = 8 + 0.3 * Math.sin(t * 18);
-          paintSaber(green, quiX, quiY, -Math.PI / 2, saberLen);
+          paintSaber(green, quiX, quiY, -Math.PI / 2, saberLen); // straight up
         }
 
-        // Maul paces using MAUL_PACE
-        const paceT = (localT * 2) % 1.0;
+        // Maul paces 64→76→64 using MAUL_PACE
+        const paceT = (localT * 2) % 1.0; // oscillate
         const maulX = paceT < 0.5
-          ? Math.round(lerp(52, 60, easeInOutCubic(paceT * 2)))
-          : Math.round(lerp(60, 52, easeInOutCubic((paceT - 0.5) * 2)));
-        const maulY = 5;
+          ? Math.round(lerp(64, 76, easeInOutCubic(paceT * 2)))
+          : Math.round(lerp(76, 64, easeInOutCubic((paceT - 0.5) * 2)));
+        const maulY = 22;
         const goingRight = (localT * 2 % 1.0) < 0.5;
 
+        // Mirror MAUL_PACE based on direction
         const maulSprite = goingRight ? MAUL_PACE : mirrorSprite(MAUL_PACE);
         const maulHiltC = maulSprite.hilt ? maulSprite.hilt.c : MAUL_PACE.hilt.c;
         const maulHiltR = maulSprite.hilt ? maulSprite.hilt.r : MAUL_PACE.hilt.r;
         overlaySprite(red, maulSprite, maulX - maulHiltC, maulY - maulHiltR);
 
+        // Maul double-blade with idle hum
         const maulAngle = goingRight ? Math.PI * 0.15 : Math.PI * 0.85;
-        const maulSaberLen = 12 + 0.3 * Math.sin(t * 18);
+        const maulSaberLen = 10 + 0.3 * Math.sin(t * 18);
         paintSaber(red, maulX, maulY, maulAngle, maulSaberLen);
         paintSaber(red, maulX, maulY, maulAngle + Math.PI, maulSaberLen);
-        paintMaulEmber(red, t, maulX, maulY + 5);
+        paintMaulEmber(red, t, maulX, maulY);
 
-        // Obi-Wan at (90,5) idle with OBI_STANCE (mirrored to face left)
-        const obiX = 90, obiY = 5;
-        const obiMirrored = mirrorSprite(OBI_STANCE);
-        overlaySprite(blue, obiMirrored, obiX - obiMirrored.hilt.c, obiY - obiMirrored.hilt.r);
-        const obiSaberLen = 12 + 0.3 * Math.sin(t * 18 + 2.0);
-        paintSaber(blue, obiX, obiY, Math.PI, obiSaberLen);
+        // Obi-Wan at (100,22) idle with OBI_STANCE
+        const obiX = 100, obiY = 22;
+        overlaySprite(blue, OBI_STANCE, obiX - OBI_STANCE.hilt.c, obiY - OBI_STANCE.hilt.r);
+        const obiSaberLen = 10 + 0.3 * Math.sin(t * 18 + 2.0);
+        paintSaber(blue, obiX, obiY, Math.PI, obiSaberLen); // pointing left (toward Maul)
       },
 
       beat3_corridor(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
-        // Force-field bar at cols 78–80 (between Maul and Obi-Wan)
-        for (let r = 5; r <= 32; r++) {
+        // Force-field bar at cols 92-94
+        for (let r = 4; r <= 28; r++) {
           const ch = ((r + Math.floor(t * 4)) % 3 === 0) ? " " : "│";
-          if (r >= 0 && r < H) {
-            if (78 < W) mono[r][78] = ch;
-            if (79 < W) mono[r][79] = ch;
-            if (80 < W) mono[r][80] = ch;
-          }
+          if (92 >= 0 && 92 < W && r >= 0 && r < H) mono[r][92] = ch;
+          if (93 >= 0 && 93 < W && r >= 0 && r < H) mono[r][93] = ch;
+          if (94 >= 0 && 94 < W && r >= 0 && r < H) mono[r][94] = ch;
         }
 
-        // Qui-Gon at (35,5) alternating swing/stance
-        const quiX = 35, quiY = 5;
+        // Qui-Gon at (48,22) alternating QUI_SWING/QUI_STANCE each 0.5s
+        const quiX = 48, quiY = 22;
         const quiSwinging = Math.floor(localT * 2) % 2 === 0;
         const quiSprite = quiSwinging ? QUI_SWING : QUI_STANCE;
         overlaySprite(green, quiSprite, quiX - quiSprite.hilt.c, quiY - quiSprite.hilt.r);
         const quiAngle = quiSwinging ? 0 : -Math.PI * 0.2;
-        const quiLen = 14 + 0.3 * Math.sin(t * 18);
+        const quiLen = 12 + 0.3 * Math.sin(t * 18);
         paintSaber(green, quiX, quiY, quiAngle, quiLen);
 
-        // Maul at (52,5)
-        const maulX = 52, maulY = 5;
+        // Maul at (60,22) mirroring
+        const maulX = 60, maulY = 22;
         const maulAngle = Math.PI + Math.sin(t * 4) * 0.4;
         overlaySprite(red, MAUL_STANCE, maulX - MAUL_STANCE.hilt.c, maulY - MAUL_STANCE.hilt.r);
-        const maulLen = 13 + 0.3 * Math.sin(t * 18);
+        const maulLen = 11 + 0.3 * Math.sin(t * 18);
         paintSaber(red, maulX, maulY, maulAngle, maulLen);
         paintSaber(red, maulX, maulY, maulAngle + Math.PI, maulLen);
-        paintMaulEmber(red, t, maulX, maulY + 5);
+        paintMaulEmber(red, t, maulX, maulY);
 
-        // Obi-Wan trapped at (90,5) behind force field (mirrored)
-        const obiX = 90, obiY = 5;
-        const obiMirrored = mirrorSprite(OBI_STANCE);
-        overlaySprite(blue, obiMirrored, obiX - obiMirrored.hilt.c, obiY - obiMirrored.hilt.r);
-        const obiLen = 12 + 0.3 * Math.sin(t * 18 + 2.0);
+        // Obi-Wan stuck at (110,22) in OBI_STANCE
+        const obiX = 110, obiY = 22;
+        overlaySprite(blue, OBI_STANCE, obiX - OBI_STANCE.hilt.c, obiY - OBI_STANCE.hilt.r);
+        const obiLen = 10 + 0.3 * Math.sin(t * 18 + 2.0);
         paintSaber(blue, obiX, obiY, Math.PI, obiLen);
 
-        // Clash sparks between Qui-Gon and Maul every 1s
+        // Slow clash sparks every 1s in the middle (between Qui-Gon and Maul)
         const clashCycle = t % 1.0;
         if (clashCycle > 0.0 && clashCycle < 0.15) {
           const intensity = 0.5 * (1.0 - clashCycle / 0.15);
           const clashX = Math.round((quiX + maulX) / 2);
-          paintSaberClash(red, green, blue, clashX, quiY + 15, intensity, { red: true, green: true });
+          paintSaberClash(red, green, blue, clashX, quiY, intensity, { red: true, green: true });
         }
       },
 
       beat4_fall(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
-        const quiX = 35, quiY = 5;
-        const maulX = 52, maulY = 5;
-        const obiX = 90, obiY = 5;
+        const quiX = 48, quiY = 22;
+        const maulX = 60, maulY = 22;
+        const obiX = 110, obiY = 22;
 
-        // Obi-Wan still trapped behind force field (mirrored)
-        const obiMirrored = mirrorSprite(OBI_STANCE);
-        overlaySprite(blue, obiMirrored, obiX - obiMirrored.hilt.c, obiY - obiMirrored.hilt.r);
-        paintSaber(blue, obiX, obiY, Math.PI, 12);
+        // Obi-Wan still trapped behind force field
+        overlaySprite(blue, OBI_STANCE, obiX - OBI_STANCE.hilt.c, obiY - OBI_STANCE.hilt.r);
+        paintSaber(blue, obiX, obiY, Math.PI, 10);
 
         if (localT < 0.4) {
           // Maul thrusts at Qui-Gon
           overlaySprite(red, MAUL_THRUST, maulX - MAUL_THRUST.hilt.c, maulY - MAUL_THRUST.hilt.r);
-          const thrustHiltX = maulX - 3;
-          const thrustHiltY = maulY + 4;
-          paintSaber(red, thrustHiltX, thrustHiltY, Math.PI, 16);
-          paintMaulEmber(red, t, thrustHiltX, thrustHiltY);
+          paintSaber(red, maulX - 4, maulY, Math.PI, 14);
+          paintMaulEmber(red, t, maulX - 4, maulY);
 
           // Qui-Gon still standing
           overlaySprite(green, QUI_STANCE, quiX - QUI_STANCE.hilt.c, quiY - QUI_STANCE.hilt.r);
-          paintSaber(green, quiX, quiY, 0, 12);
+          paintSaber(green, quiX, quiY, 0, 10);
 
+          // Contact at localT == 0.25: shake
           if (localT >= 0.25 && localT < 0.35) {
             stageFlags.shake = true;
           }
 
         } else {
-          // Qui-Gon collapses
+          // Qui-Gon collapses: morph STANCE→FALLEN
           const fallT = (localT - 0.4) / 0.6;
           if (fallT < 0.5) {
+            // Mid-fall
             overlaySprite(green, QUI_STANCE, quiX - QUI_STANCE.hilt.c, quiY - QUI_STANCE.hilt.r);
+            // Saber fading
             const saberFade = 1.0 - fallT * 2.0;
-            const sLen = Math.round(12 * saberFade);
+            const sLen = Math.round(10 * saberFade);
             if (sLen > 0) paintSaber(green, quiX, quiY, Math.PI / 6, sLen);
           } else {
-            // Fully fallen — place at an appropriate row offset
-            overlaySprite(green, QUI_FALLEN, quiX - 4, quiY + 2);
+            // Fully fallen
+            overlaySprite(green, QUI_FALLEN, quiX - 4, quiY - 4);
+            // Dust particles
             const dustT = (fallT - 0.5) * 2.0;
             const dustChars = [".", ",", "'", "."];
             for (let k = 0; k < 8; k++) {
@@ -1091,189 +716,186 @@
               const vx = ((seed * 13) % 7) - 3;
               const vy = ((seed * 7) % 5) - 2;
               const px = Math.round(quiX + vx * dustT * 3);
-              const py = Math.round(quiY + 24 + vy * dustT * 2);
-              if (px >= 0 && px < ACTION_W && py >= 0 && py < H) {
+              const py = Math.round(quiY + vy * dustT * 2);
+              if (px >= 0 && px < W && py >= 0 && py < H) {
                 const ci = Math.min(Math.floor(dustT * 3.99), 3);
                 mono[py][px] = dustChars[ci];
               }
             }
           }
 
+          // Maul returns to stance
           overlaySprite(red, MAUL_STANCE, maulX - MAUL_STANCE.hilt.c, maulY - MAUL_STANCE.hilt.r);
           const maulAngle = Math.PI * 0.5;
-          paintSaber(red, maulX, maulY, maulAngle, 13);
-          paintSaber(red, maulX, maulY, maulAngle + Math.PI, 13);
-          paintMaulEmber(red, t, maulX, maulY + 5);
+          paintSaber(red, maulX, maulY, maulAngle, 11);
+          paintSaber(red, maulX, maulY, maulAngle + Math.PI, 11);
+          paintMaulEmber(red, t, maulX, maulY);
         }
       },
 
       beat5_rage(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
-        const maulX = 52, maulY = 5;
+        const maulX = 64, maulY = 22;
 
+        // Maul
         overlaySprite(red, MAUL_STANCE, maulX - MAUL_STANCE.hilt.c, maulY - MAUL_STANCE.hilt.r);
         const maulTheta = Math.PI + Math.sin(t * 5) * 0.5;
-        paintSaber(red, maulX, maulY, maulTheta, 13);
-        paintSaber(red, maulX, maulY, maulTheta + Math.PI, 13);
-        paintMaulEmber(red, t, maulX, maulY + 5);
+        paintSaber(red, maulX, maulY, maulTheta, 11);
+        paintSaber(red, maulX, maulY, maulTheta + Math.PI, 11);
+        paintMaulEmber(red, t, maulX, maulY);
 
-        // OBI_CHARGE tweens (90,5)→(66,5) — Obi charges in from right
-        const chargeFrac = Math.min(1.0, localT * 5.0);
-        const obiX = Math.round(lerp(90, 70, easeOutCubic(chargeFrac)));
-        const obiY = 5;
+        // OBI_CHARGE tweens (110,22)→(64,22) over first 1s (localT 0→0.2 of 5s beat)
+        const chargeFrac = Math.min(1.0, localT * 5.0); // 0→1 in 1s of the 5s beat
+        const obiX = Math.round(lerp(110, 70, easeOutCubic(chargeFrac)));
+        const obiY = 22;
 
         if (localT < 0.3) {
-          // Charging in — mirrored to face left (toward Maul)
-          const obiMirrored = mirrorSprite(OBI_CHARGE);
-          overlaySprite(blue, obiMirrored, obiX - obiMirrored.hilt.c, obiY - obiMirrored.hilt.r);
+          // Charging in
+          overlaySprite(blue, OBI_CHARGE, obiX - OBI_CHARGE.hilt.c, obiY - OBI_CHARGE.hilt.r);
           const obiLen = 14 + 0.3 * Math.sin(t * 18);
           paintSaber(blue, obiX, obiY, Math.PI, obiLen);
         } else if (localT < 0.7) {
-          // Arrived — squaring off
-          const arrivedX = 70, arrivedY = 5;
-          const obiMirrored = mirrorSprite(OBI_STANCE);
-          overlaySprite(blue, obiMirrored, arrivedX - obiMirrored.hilt.c, arrivedY - obiMirrored.hilt.r);
-          const obiLen = 14 + 0.3 * Math.sin(t * 18);
+          // Arrived — squaring off with Maul, OBI_STANCE facing left
+          const arrivedX = 70, arrivedY = 22;
+          overlaySprite(blue, OBI_STANCE, arrivedX - OBI_STANCE.hilt.c, arrivedY - OBI_STANCE.hilt.r);
+          const obiLen = 12 + 0.3 * Math.sin(t * 18);
           paintSaber(blue, arrivedX, arrivedY, Math.PI, obiLen);
         }
 
-        // Clash sparks
+        // Clash sparks at absolute t = 19.5 and 20.5
         if ((t >= 19.5 && t < 19.65) || (t >= 20.5 && t < 20.65)) {
-          const clashX = Math.round((70 + maulX) / 2);
-          paintSaberClash(red, green, blue, clashX, obiY + 12, 0.9, { red: true, blue: true });
+          const clashX = Math.round((obiX + maulX) / 2);
+          paintSaberClash(red, green, blue, clashX, obiY, 0.9, { red: true, blue: true });
           stageFlags.shake = true;
         }
 
-        // Kick: Obi-Wan falls into pit
+        // Kick: at t=21.5 (localT=0.7), Obi-Wan falls into pit via parabolic arc
         if (localT >= 0.7 && localT < 0.9) {
+          // 1s kick window: localT goes 0.7→0.9 → subT 0→1
           const subT = (localT - 0.7) / 0.2;
           const kickX = Math.round(lerp(70, 66, subT));
-          const kickY = Math.round(5 + 20 * easeInQuad(subT));
-          const obiMirrored = mirrorSprite(OBI_STANCE);
-          overlaySprite(blue, obiMirrored, kickX - obiMirrored.hilt.c, kickY - obiMirrored.hilt.r);
+          const kickY = Math.round(22 + 8 * easeInQuad(subT));
+          overlaySprite(blue, OBI_STANCE, kickX - OBI_STANCE.hilt.c, kickY - OBI_STANCE.hilt.r);
         }
 
-        // At localT >= 0.9: OBI_PIT at pit position (col 66)
+        // At localT >= 0.9: OBI_PIT at (66, 31)
         if (localT >= 0.9) {
-          overlaySprite(blue, OBI_PIT, 66 - OBI_PIT.hilt.c, 17 - OBI_PIT.hilt.r);
-          paintSaber(blue, 66, 17, -Math.PI / 4, 6);
+          overlaySprite(blue, OBI_PIT, 66 - OBI_PIT.hilt.c, 31 - OBI_PIT.hilt.r);
+          paintSaber(blue, 66, 31, -Math.PI / 4, 6); // saber held up dimly
         }
       },
 
-      beat6_sithVictory(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
-        // Sith victory sequence
-        // Maul starts at 52, approaches pit edge at 60
-        // Obi-Wan in pit at col 66
+      beat6_bisect(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
+        const maulX = 64, maulY = 22;
 
-        if (localT < 0.30) {
-          // Maul walks toward pit edge using MAUL_PACE
-          const maulX = Math.round(lerp(52, 60, localT / 0.30));
-          const maulY = 5;
-          const goingRight = true;
-          overlaySprite(red, MAUL_PACE, maulX - MAUL_PACE.hilt.c, maulY - MAUL_PACE.hilt.r);
-          const bladeAngle = Math.PI * 0.15;
-          paintSaber(red, maulX, maulY, bladeAngle, 10);
-          paintSaber(red, maulX, maulY, bladeAngle + Math.PI, 10);
-          paintMaulEmber(red, t, maulX, maulY + 5);
+        if (localT < 0.4) {
+          // Parabolic Force-leap
+          // Arc: (66,31)→(66,18)→(66,22) — parabolic
+          const leapT = localT / 0.4; // 0→1 over first 0.4
+          // y = 31 at start, dips to 18 at midpoint, lands at 22
+          const leapX = 66;
+          const leapY = Math.round(
+            leapT < 0.5
+              ? lerp(31, 14, easeOutCubic(leapT * 2))
+              : lerp(14, 22, easeInCubic((leapT - 0.5) * 2))
+          );
 
-          // Obi-Wan in pit — dim blue saber raised, flickering
-          const flickerOn = Math.sin(t * 12) > 0;
-          overlaySprite(blue, OBI_PIT, 66 - OBI_PIT.hilt.c, 17 - OBI_PIT.hilt.r);
-          if (flickerOn) {
-            paintSaber(blue, 66, 17, -Math.PI / 2, 4);
-          }
+          // Paint OBI_LEAP at current position
+          overlaySprite(blue, OBI_LEAP, leapX - OBI_LEAP.hilt.c, leapY - OBI_LEAP.hilt.r);
+          paintSaber(blue, leapX, leapY, -Math.PI / 2, 8); // saber overhead
 
-        } else if (localT < 0.55) {
-          // Maul at pit edge, switches to MAUL_THRUST, plunges saber down
-          const maulX = 60, maulY = 5;
-          overlaySprite(red, MAUL_THRUST, maulX - MAUL_THRUST.hilt.c, maulY - MAUL_THRUST.hilt.r);
-
-          // Red blade extends downward
-          const thrustProgress = (localT - 0.30) / 0.25;
-          const bladeLen = Math.round(lerp(8, 18, thrustProgress));
-          // Hilt position for downward thrust
-          const thrustHiltX = maulX + 1;
-          const thrustHiltY = maulY + 9;
-          paintSaber(red, thrustHiltX, thrustHiltY, Math.PI / 2, bladeLen);
-
-          // At localT ~0.42: impact flash and shake
-          if (localT >= 0.42 && localT < 0.44) {
-            stageFlags.shake = true;
-            stageFlags.clashFlash = true;
-            // Spark particles at pit entrance
-            for (let k = 0; k < 8; k++) {
-              const sx = 60 + ((k * 7 + 3) % 11) - 5;
-              const sy = 28 + ((k * 5) % 5);
-              if (sx >= 0 && sx < ACTION_W && sy >= 0 && sy < H) {
-                yellow[sy][sx] = "*";
-              }
+          // Ghost trail — 3 copies at past positions with dimmer chars
+          const ghostOffsets = [0.06, 0.13, 0.20];
+          const ghostDims = [
+            ["@", "#", ":"],   // slightly behind — medium dim
+            ["#", ":", "."],   // further behind
+            [":", ".", " "],   // furthest
+          ];
+          for (let g = 0; g < ghostOffsets.length; g++) {
+            const gT = Math.max(0, leapT - ghostOffsets[g]);
+            const gY = Math.round(
+              gT < 0.5
+                ? lerp(31, 14, easeOutCubic(gT * 2))
+                : lerp(14, 22, easeInCubic((gT - 0.5) * 2))
+            );
+            // Paint dimmed ghost sprite
+            const ghostDimMap = ghostDims[g];
+            const ghostSprite = OBI_LEAP.map(row =>
+              row.split("").map(c => {
+                if (c === "@") return ghostDimMap[0];
+                if (c === "#" || c === "M") return ghostDimMap[1];
+                if (c === "&" || c === "W") return ghostDimMap[2];
+                if (c !== " ") return ".";
+                return " ";
+              }).join("")
+            );
+            if (gY !== leapY) {
+              overlaySprite(mono, ghostSprite, leapX - OBI_LEAP.hilt.c, gY - OBI_LEAP.hilt.r);
             }
           }
 
-          // Obi-Wan in pit with blade being overrun
-          overlaySprite(blue, OBI_PIT, 66 - OBI_PIT.hilt.c, 17 - OBI_PIT.hilt.r);
-          // Blue saber briefly visible then extinguished
-          if (localT < 0.42) {
-            paintSaber(blue, 66, 17, -Math.PI / 2, 4);
-          }
-
-        } else if (localT < 0.75) {
-          // Obi-Wan fallen — blue saber fades out
-          const maulX = 60, maulY = 5;
+          // Maul taunting
           overlaySprite(red, MAUL_STANCE, maulX - MAUL_STANCE.hilt.c, maulY - MAUL_STANCE.hilt.r);
-          // Red blade retracted
-          paintSaber(red, maulX + 2, maulY + 10, Math.PI / 2, 8);
-          paintMaulEmber(red, t, maulX, maulY + 5);
+          const maulAngle = Math.PI * 0.3 + Math.sin(t * 3) * 0.2;
+          paintSaber(red, maulX, maulY, maulAngle, 10);
+          paintSaber(red, maulX, maulY, maulAngle + Math.PI, 10);
+          paintMaulEmber(red, t, maulX, maulY);
 
-          // OBI_FALLEN at pit position
-          overlaySprite(blue, OBI_FALLEN, 66 - OBI_FALLEN.hilt.c, 5 - OBI_FALLEN.hilt.r);
+        } else if (localT >= 0.4 && localT < 0.55) {
+          // Blue blade fully extended overhead, white flash
+          const flashT = (localT - 0.4) / 0.15;
+          overlaySprite(blue, OBI_LEAP, 66 - OBI_LEAP.hilt.c, 22 - OBI_LEAP.hilt.r);
+          paintSaber(blue, 66, 22, -Math.PI / 2, 12); // full saber overhead
 
-          // Blue saber length tweens 6→0
-          const blueFade = (0.75 - localT) / 0.20;
-          const blueLen = Math.round(lerp(0, 6, Math.max(0, blueFade)));
-          if (blueLen > 0) {
-            paintSaber(blue, 66, 30, -Math.PI / 2, blueLen);
+          if (flashT > 0.3 && flashT < 0.8) {
+            stageFlags.clashFlash = true;
           }
 
-        } else {
-          // MAUL_VICTORIOUS — double saber raised
-          const maulX = 60, maulY = 5;
-          overlaySprite(red, MAUL_VICTORIOUS, maulX - MAUL_VICTORIOUS.hilt.c, maulY - MAUL_VICTORIOUS.hilt.r);
+          // Maul about to be hit
+          overlaySprite(red, MAUL_STANCE, maulX - MAUL_STANCE.hilt.c, maulY - MAUL_STANCE.hilt.r);
+          paintSaber(red, maulX, maulY, 0, 8);
+          paintMaulEmber(red, t, maulX, maulY);
 
-          // Both blades growing from hilt (hilt at {c:6, r:5} → world position maulX+0, maulY+0)
-          const victoryProgress = (localT - 0.75) / 0.25;
-          const bladeLen = Math.round(lerp(0, 14, easeOutCubic(victoryProgress)));
-          const victoryHiltX = maulX - MAUL_VICTORIOUS.hilt.c + 6;
-          const victoryHiltY = maulY - MAUL_VICTORIOUS.hilt.r + 5;
+        } else if (localT >= 0.55) {
+          // Bisection!
+          const bisectT = (localT - 0.55) / 0.45; // 0→1 over remaining time
 
-          // Upward blade
-          paintSaber(red, victoryHiltX, victoryHiltY, -Math.PI / 2, bladeLen);
-          // Downward blade
-          paintSaber(red, victoryHiltX, victoryHiltY, Math.PI / 2, bladeLen);
+          // Obi-Wan victorious
+          const obiSprite = bisectT > 0.3 ? OBI_STANCE : OBI_LEAP;
+          const obiSpriteX = 66 - obiSprite.hilt.c;
+          const obiSpriteY = 22 - obiSprite.hilt.r;
+          overlaySprite(blue, obiSprite, obiSpriteX, obiSpriteY);
+          const obiAngle = bisectT > 0.3 ? -Math.PI * 0.1 : -Math.PI / 2;
+          paintSaber(blue, 66, 22, obiAngle, 10);
 
-          // Pulsing ember effect at hilt
-          const pulse = 0.5 + 0.5 * Math.sin(t * 4.6) * Math.sin(t * 2.2);
-          const EMBER_RAMP = [".", ",", ":", "o", "O", "@", "*"];
-          const pidx = Math.floor(pulse * 6.99);
-          const pch = EMBER_RAMP[Math.max(0, Math.min(6, pidx))];
-          if (victoryHiltX >= 0 && victoryHiltX < W && victoryHiltY >= 0 && victoryHiltY < H) {
-            yellow[victoryHiltY][victoryHiltX] = pch;
+          // Blue saber sweep horizontally at row 26 for first 0.3s after bisection
+          if (bisectT < 0.3) {
+            const sweepLen = Math.round(lerp(0, 20, bisectT / 0.3));
+            for (let i = 0; i < sweepLen; i++) {
+              const sx = maulX - 10 + i;
+              if (sx >= 0 && sx < W) blue[26][sx] = "─";
+            }
           }
 
-          // OBI_FALLEN remains visible
-          overlaySprite(blue, OBI_FALLEN, 66 - OBI_FALLEN.hilt.c, 5 - OBI_FALLEN.hilt.r);
+          // Maul upper half: rows 0..4 of MAUL_STANCE
+          const maulUpperSprite = MAUL_STANCE.slice(0, 5);
+          overlaySprite(red, maulUpperSprite, maulX - MAUL_STANCE.hilt.c, maulY - MAUL_STANCE.hilt.r);
+
+          // Maul lower half: rows 5..8, falling downward
+          const maulLowerSprite = MAUL_STANCE.slice(5);
+          const fallOffset = Math.floor(bisectT * 30);
+          overlaySprite(red, maulLowerSprite, maulX - MAUL_STANCE.hilt.c, maulY - MAUL_STANCE.hilt.r + 5 + fallOffset);
         }
       },
 
       reset(ev, t01, localT, t, mono, yellow, red, green, blue, stageFlags) {
-        // Progressive erase via hashFn — skip cols 110+ (text zone)
+        // Progressive erase based on hashFn
         for (let r = 0; r < H; r++) {
-          for (let c = 0; c < 110; c++) {
+          for (let c = 0; c < W; c++) {
             if (hashFn(c, r) < localT) {
               mono[r][c]  = " ";
               red[r][c]   = " ";
               green[r][c] = " ";
               blue[r][c]  = " ";
-              yellow[r][c] = " ";
             }
           }
         }
@@ -1313,22 +935,11 @@
       const green  = emptyGrid();
       const blue   = emptyGrid();
 
-      // 1. Static backdrop (rocks, ridge, pit)
       paintBackdrop(mono);
-
-      // 2. Animated lava
-      paintMustafar(mono, red, yellow, t);
-
-      // 3. Ember particle system
-      spawnEmbers(t);
-      updateAndPaintEmbers(t, red, yellow);
-
-      // 4. Sky embers (drifting sparse in upper rows)
-      paintSkyEmbers(red, t);
+      paintStarfieldWithTwinkle(mono, t);
 
       const stageFlags = { shake: false, clashFlash: false };
 
-      // 5. Timeline event handlers
       for (const ev of TIMELINE) {
         if (t >= ev.start && t < ev.end) {
           const localT = (t - ev.start) / (ev.end - ev.start);
@@ -1339,9 +950,6 @@
 
       stageEl.classList.toggle("shake", stageFlags.shake);
       stageEl.classList.toggle("clash-flash", stageFlags.clashFlash);
-
-      // 7. Text overlay — ALWAYS LAST (after all event handlers and ambient)
-      paintTextOverlay(mono);
 
       monoEl.textContent   = gridToString(mono);
       yellowEl.textContent = gridToString(yellow);
