@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Death Star Attack — ASCII Animation</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      color: #d8d8d8;
+      min-height: 100vh;
+      font-family: "Menlo", "Monaco", "Consolas", "Courier New", monospace;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .stage {
+      position: relative;
+      padding: 20px 24px;
+      border: 1px solid #1f1f1f;
+      border-radius: 6px;
+      background: #050505;
+      will-change: transform;
+    }
+    .stage.shake {
+      animation: shake 0.25s linear infinite;
+    }
+    .stage.flash { background: #fafafa; }
+    .stage.blackout { background: #000; }
+    @keyframes shake {
+      0%   { transform: translate(0, 0); }
+      25%  { transform: translate(-2px, 1px); }
+      50%  { transform: translate(2px, -1px); }
+      75%  { transform: translate(-1px, -2px); }
+      100% { transform: translate(1px, 2px); }
+    }
+    pre {
+      font-size: 12px;
+      line-height: 1;
+      letter-spacing: 0;
+      white-space: pre;
+      margin: 0;
+      font-variant-ligatures: none;
+      font-feature-settings: "liga" 0;
+    }
+    pre#mono {
+      color: #f0f0f0;
+      text-shadow: 0 0 3px rgba(255, 255, 255, 0.12);
+    }
+    pre#red {
+      position: absolute;
+      top: 20px;
+      left: 24px;
+      color: #ff2a2a;
+      text-shadow: 0 0 5px #ff2a2a, 0 0 14px #a00;
+      pointer-events: none;
+    }
+    pre#yellow {
+      position: absolute;
+      top: 20px;
+      left: 24px;
+      color: #ffd24a;
+      text-shadow: 0 0 4px #ffd24a;
+      pointer-events: none;
+    }
+    .flash pre#mono { color: #000; text-shadow: none; }
+    .blackout pre#mono { color: #050505; text-shadow: none; }
+    .controls {
+      margin-top: 16px;
+      display: flex;
+      gap: 10px;
+    }
+    button {
+      background: #111;
+      color: #ffd24a;
+      border: 1px solid #ffd24a;
+      padding: 6px 14px;
+      font-family: inherit;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+    button:hover { background: #1a1a1a; }
+    .caption {
+      margin-top: 10px;
+      color: #555;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+    }
+    .back {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #666;
+    }
+    .back a { color: #888; }
+  </style>
+</head>
+<body>
+  <div class="stage" id="stage">
+    <pre id="mono"></pre>
+    <pre id="yellow"></pre>
+    <pre id="red"></pre>
+  </div>
+  <div class="controls">
+    <button id="replay">REPLAY</button>
+  </div>
+  <div class="caption">death star attack · 100×30 · two-layer renderer</div>
+  <div class="back"><a href="index.html">← back</a></div>
+
+  <script>
+    const W = 100;
+    const H = 30;
+
+    // -- Starfield ---------------------------------------------------------
+    function makeStarfield() {
+      // Deterministic pseudo-random starfield. Two densities: bright * and dim .
+      const grid = [];
+      for (let r = 0; r < H; r++) {
+        const row = new Array(W).fill(" ");
+        for (let c = 0; c < W; c++) {
+          const h = (r * 131 + c * 17 + r * c * 3) % 97;
+          if (h === 0) row[c] = "*";
+          else if (h < 3) row[c] = ".";
+          else if (h < 6) row[c] = ".";
+        }
+        grid.push(row);
+      }
+      return grid;
+    }
+
+    function emptyGrid(ch = " ") {
+      const grid = [];
+      for (let r = 0; r < H; r++) grid.push(new Array(W).fill(ch));
+      return grid;
+    }
+
+    function copyGrid(g) {
+      return g.map(row => row.slice());
+    }
+
+    const BASE_STARFIELD = makeStarfield();
+    function starfieldCopy() { return copyGrid(BASE_STARFIELD); }
+
+    // -- Sprite helpers ----------------------------------------------------
+    function overlaySprite(grid, sprite, x0, y0) {
+      for (let i = 0; i < sprite.length; i++) {
+        const row = sprite[i];
+        for (let j = 0; j < row.length; j++) {
+          const ch = row[j];
+          if (ch === " ") continue;
+          const r = y0 + i;
+          const c = x0 + j;
+          if (r >= 0 && r < H && c >= 0 && c < W) grid[r][c] = ch;
+        }
+      }
+    }
+
+    function eraseRect(grid, x0, y0, w, h) {
+      for (let i = 0; i < h; i++) {
+        for (let j = 0; j < w; j++) {
+          const r = y0 + i;
+          const c = x0 + j;
+          if (r >= 0 && r < H && c >= 0 && c < W) grid[r][c] = " ";
+        }
+      }
+    }
+
+    function gridToString(grid) {
+      return grid.map(r => r.join("")).join("\n");
+    }
+
+    // -- Sprites -----------------------------------------------------------
+
+    // DS_TINY: a single pixel speck (1x1) -- used for the very first appearance
+    const DS_TINY = ["."];
+
+    // DS_SMALL: 5x3 — distant Death Star
+    const DS_SMALL = [
+      " .-. ",
+      "(:::)",
+      " '-' ",
+    ];
+
+    // DS_MED: 13x9 — mid-distance Death Star
+    const DS_MED = [
+      "   .=####=.  ",
+      "  .##::::##. ",
+      "  /::(O)::\\  ",
+      " |::::::::::|",
+      " |==========|",
+      " |::::::::::|",
+      "  \\::::::::/ ",
+      "  '##::::##' ",
+      "   '=####='  ",
+    ];
+
+    // DS_LARGE: 21x13 — close Death Star, used as the firing platform.
+    // The dish (O) is in the upper-right quadrant; superlaser fires to the right.
+    const DS_LARGE = [
+      "      .=######=.     ",
+      "    .###::::::###.   ",
+      "   /:::::::::::::\\   ",
+      "   /::::::(O):::::\\  ",
+      "  |:::::::::::::::|  ",
+      "  |:::::::::::::::|  ",
+      "  |===============|  ",
+      "  |:::::::::::::::|  ",
+      "  |:::::::::::::::|  ",
+      "   \\:::::::::::::/   ",
+      "   \\:::::::::::::/   ",
+      "    '###::::::###'   ",
+      "      '=######='     ",
+    ];
+
+    // DS_LARGE with dish glow — replaces the (O) area with bigger glow chars.
+    function dsLargeWithGlow(glowChar) {
+      // The (O) sits in row 3 at cols 9-11 (0-indexed within sprite).
+      const copy = DS_LARGE.map(r => r);
+      const original = copy[3];
+      // Replace cols 9..11 with `(glowChar)`
+      const replaced =
+        original.substring(0, 9) + "(" + glowChar + ")" + original.substring(12);
+      copy[3] = replaced;
+      return copy;
+    }
+
+    // X-Wing facing LEFT (cockpit on left, engine flame trailing right).
+    // 3 rows x 6 cols.
+    const XWING = [
+      ")=]==>",
+      "  ===>",
+      ")=]==>",
+    ];
+
+    // X-Wing slightly banked (alternates with XWING for motion feel)
+    const XWING_B = [
+      ")=]==>",
+      " (==>",
+      ")=]==>",
+    ];
+
+    // Explosion stages (these go on the RED layer; we erase mono at the same area)
+    const EXP_TINY = [
+      " . ",
+      ".*.",
+      " . ",
+    ];
+    const EXP_SMALL = [
+      " *.* ",
+      ".*X*.",
+      " *.* ",
+    ];
+    const EXP_MED = [
+      "  .*.  ",
+      " *X*X* ",
+      ".*XOX*.",
+      " *X*X* ",
+      "  .*.  ",
+    ];
+    const EXP_LARGE = [
+      " .*. * .*. ",
+      "*XOXOXOXOX*",
+      ".OX@@@@@XO.",
+      "*XOXOXOXOX*",
+      " .*. * .*. ",
+    ];
+
+    // -- Beam rendering ----------------------------------------------------
+
+    // Beam fires from the dish position. With DS_LARGE placed at (dsX, dsY),
+    // the dish (O) is at sprite-local (10, 3), so screen-space (dsX+10, dsY+3).
+    function dishPos(dsX, dsY) {
+      return { x: dsX + 10, y: dsY + 3 };
+    }
+
+    function drawConvergenceStreaks(redGrid, cx, cy, len) {
+      // 8 short streaks racing toward (cx, cy)
+      const dirs = [
+        [-1, 0, "-"], [1, 0, "-"],
+        [0, -1, "|"], [0, 1, "|"],
+        [-1, -1, "\\"], [1, 1, "\\"],
+        [1, -1, "/"], [-1, 1, "/"],
+      ];
+      for (const [dx, dy, ch] of dirs) {
+        for (let k = 2; k <= len + 1; k++) {
+          const x = cx + dx * k;
+          const y = cy + dy * k;
+          if (x >= 0 && x < W && y >= 0 && y < H) {
+            redGrid[y][x] = ch;
+          }
+        }
+      }
+    }
+
+    function drawBeam(redGrid, srcX, srcY, length, thickness) {
+      // Horizontal beam from (srcX, srcY), going right.
+      const halfT = Math.floor(thickness / 2);
+      for (let dy = -halfT; dy <= halfT; dy++) {
+        const y = srcY + dy;
+        if (y < 0 || y >= H) continue;
+        for (let i = 0; i < length; i++) {
+          const x = srcX + i;
+          if (x >= W) break;
+          if (x < 0) continue;
+          let ch;
+          if (i === 0) ch = "@";
+          else if (i === length - 1) ch = ">";
+          else if (dy === 0) ch = "=";
+          else ch = "-";
+          redGrid[y][x] = ch;
+        }
+      }
+    }
+
+    function drawDebris(grid, points) {
+      const chars = [".", ",", "'", "`", ".", " "];
+      for (let i = 0; i < points.length; i++) {
+        const [x, y, age] = points[i];
+        if (x < 0 || x >= W || y < 0 || y >= H) continue;
+        const ch = chars[Math.min(age, chars.length - 1)];
+        if (ch !== " ") grid[y][x] = ch;
+      }
+    }
+
+    // -- Frame builder -----------------------------------------------------
+
+    function buildFrames() {
+      const frames = [];
+
+      // Constants for DS_LARGE final resting position
+      const DS_X = 2;
+      const DS_Y = 7;  // rows 7..19 occupied (DS is 13 tall)
+      const dish = dishPos(DS_X, DS_Y);  // (12, 10)
+
+      // X-Wing path positions over the strafing run.
+      // Each entry: [Ax, Bx, Cx] all going left.
+      const ROW_A = 9, ROW_B = 14, ROW_C = 20;
+
+      // ---- Phase 1: Approach (DS appears as dot, grows) ----
+      {
+        // Frame 1: empty starfield
+        const mono = starfieldCopy();
+        frames.push([1400, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
+      }
+      {
+        // Frame 2: DS_TINY appears far on left
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_TINY, 22, 14);
+        frames.push([900, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
+      }
+      {
+        // Frame 3: DS_SMALL near center-left
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_SMALL, 18, 13);
+        frames.push([800, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
+      }
+      {
+        // Frame 4: DS_MED
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_MED, 8, 11);
+        frames.push([800, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
+      }
+      {
+        // Frame 5: DS_LARGE in final position
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
+        frames.push([1100, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
+      }
+
+      // ---- Phase 2: X-Wings enter and strafe ----
+      const xwingPaths = [
+        // [Ax, By rows: A row 9, B row 14, C row 20], advancing left over 6 frames
+        { ax: 92, bx: 96, cx: 88 },
+        { ax: 80, bx: 84, cx: 76 },
+        { ax: 68, bx: 72, cx: 64 },
+        { ax: 56, bx: 60, cx: 52 },
+        { ax: 48, bx: 52, cx: 44 },
+        { ax: 44, bx: 48, cx: 40 },
+      ];
+
+      for (let i = 0; i < xwingPaths.length; i++) {
+        const { ax, bx, cx } = xwingPaths[i];
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
+        const sprite = (i % 2 === 0) ? XWING : XWING_B;
+        overlaySprite(mono, sprite, ax, ROW_A);
+        overlaySprite(mono, sprite, bx, ROW_B);
+        overlaySprite(mono, sprite, cx, ROW_C);
+
+        // Yellow laser bolts from X-Wings toward DS on the last 2 strafing frames
+        const yellow = emptyGrid();
+        if (i >= 3) {
+          // Each X-Wing fires a short bolt leftward from its nose
+          const bolts = [
+            [ax - 1, ROW_A + 1],
+            [bx - 1, ROW_B + 1],
+            [cx - 1, ROW_C + 1],
+          ];
+          for (const [bx0, by0] of bolts) {
+            for (let k = 0; k < 5; k++) {
+              const x = bx0 - k * 2;
+              if (x >= 0 && x < W) yellow[by0][x] = "-";
+            }
+          }
+        }
+        frames.push([320, gridToString(mono), gridToString(yellow), gridToString(emptyGrid()), {}]);
+      }
+
+      // X-Wings hold position (final strafing pose, fly-by in beam path)
+      const HOLD_A = 44, HOLD_B = 48, HOLD_C = 40;
+      {
+        // Frame: hold + last bolts
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
+        overlaySprite(mono, XWING, HOLD_A, ROW_A);
+        overlaySprite(mono, XWING, HOLD_B, ROW_B);
+        overlaySprite(mono, XWING, HOLD_C, ROW_C);
+        frames.push([400, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
+      }
+
+      // ---- Phase 3: DS charges (dish glow buildup) ----
+      const glowSteps = [".", "o", "O", "0", "@"];
+      for (let i = 0; i < glowSteps.length; i++) {
+        const mono = starfieldCopy();
+        // Use DS_LARGE with glow char in the dish (only when bright)
+        if (i < 2) {
+          overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
+        } else {
+          overlaySprite(mono, dsLargeWithGlow(glowSteps[i]), DS_X, DS_Y);
+        }
+        // Keep X-Wings holding
+        overlaySprite(mono, (i % 2 === 0) ? XWING : XWING_B, HOLD_A, ROW_A);
+        overlaySprite(mono, (i % 2 === 0) ? XWING : XWING_B, HOLD_B, ROW_B);
+        overlaySprite(mono, (i % 2 === 0) ? XWING : XWING_B, HOLD_C, ROW_C);
+
+        // Red dish glow
+        const red = emptyGrid();
+        if (i >= 1) red[dish.y][dish.x] = glowSteps[i];
+
+        const delay = [550, 500, 450, 400, 320][i];
+        frames.push([delay, gridToString(mono), gridToString(emptyGrid()), gridToString(red), {}]);
+      }
+
+      // ---- Phase 4: Convergence streaks ----
+      {
+        const mono = starfieldCopy();
+        overlaySprite(mono, dsLargeWithGlow("@"), DS_X, DS_Y);
+        overlaySprite(mono, XWING, HOLD_A, ROW_A);
+        overlaySprite(mono, XWING, HOLD_B, ROW_B);
+        overlaySprite(mono, XWING, HOLD_C, ROW_C);
+        const red = emptyGrid();
+        red[dish.y][dish.x] = "@";
+        drawConvergenceStreaks(red, dish.x, dish.y, 1);
+        frames.push([260, gridToString(mono), gridToString(emptyGrid()), gridToString(red), {}]);
+      }
+      {
+        const mono = starfieldCopy();
+        overlaySprite(mono, dsLargeWithGlow("@"), DS_X, DS_Y);
+        overlaySprite(mono, XWING_B, HOLD_A, ROW_A);
+        overlaySprite(mono, XWING_B, HOLD_B, ROW_B);
+        overlaySprite(mono, XWING_B, HOLD_C, ROW_C);
+        const red = emptyGrid();
+        red[dish.y][dish.x] = "@";
+        drawConvergenceStreaks(red, dish.x, dish.y, 2);
+        frames.push([220, gridToString(mono), gridToString(emptyGrid()), gridToString(red), {}]);
+      }
+
+      // ---- Phase 5: Beam fires (snap) ----
+      // The beam is on row dish.y, extends rightward.
+      // X-Wings caught in the path get vaporized.
+      // Beam crosses X-Wings at rows 9, 14, 20 — but beam is on row 10 only.
+      // So the beam itself hits at row 10 (which is near ROW_A=9 + 1 -- the middle row of X-Wing A).
+      // Actually beam is 3 rows thick when full, covering rows 9, 10, 11.
+      // ROW_A=9 -> X-Wing A is at rows 9,10,11 — directly in beam.
+      // ROW_B=14, ROW_C=20 — outside beam main path. So beam will only hit X-Wing A.
+      // To make all X-Wings get hit, let's "splash" them — beam shockwave catches all.
+      // We'll do: beam fires + simultaneous explosions on all 3 X-Wing positions.
+
+      {
+        // Frame: beam thin, halfway out, no explosions yet
+        const mono = starfieldCopy();
+        overlaySprite(mono, dsLargeWithGlow("@"), DS_X, DS_Y);
+        overlaySprite(mono, XWING, HOLD_A, ROW_A);
+        overlaySprite(mono, XWING, HOLD_B, ROW_B);
+        overlaySprite(mono, XWING, HOLD_C, ROW_C);
+        const red = emptyGrid();
+        drawBeam(red, dish.x + 1, dish.y, 40, 1);
+        frames.push([90, gridToString(mono), gridToString(emptyGrid()), gridToString(red), { shake: true }]);
+      }
+      {
+        // Frame: beam full thickness, full width, X-Wings still visible (just starting to evaporate)
+        const mono = starfieldCopy();
+        overlaySprite(mono, dsLargeWithGlow("@"), DS_X, DS_Y);
+        // Erase X-Wing area (vaporized)
+        eraseRect(mono, HOLD_A - 1, ROW_A - 1, 8, 5);
+        eraseRect(mono, HOLD_B - 1, ROW_B - 1, 8, 5);
+        eraseRect(mono, HOLD_C - 1, ROW_C - 1, 8, 5);
+        const red = emptyGrid();
+        drawBeam(red, dish.x + 1, dish.y, 88, 3);
+        // Initial explosion bursts at each X-Wing position
+        overlaySprite(red, EXP_TINY, HOLD_A + 1, ROW_A);
+        overlaySprite(red, EXP_TINY, HOLD_B + 1, ROW_B);
+        overlaySprite(red, EXP_TINY, HOLD_C + 1, ROW_C);
+        frames.push([110, gridToString(mono), gridToString(emptyGrid()), gridToString(red), { shake: true, flash: true }]);
+      }
+      {
+        // Frame: peak beam + bigger explosions
+        const mono = starfieldCopy();
+        overlaySprite(mono, dsLargeWithGlow("@"), DS_X, DS_Y);
+        eraseRect(mono, HOLD_A - 2, ROW_A - 2, 10, 7);
+        eraseRect(mono, HOLD_B - 2, ROW_B - 2, 10, 7);
+        eraseRect(mono, HOLD_C - 2, ROW_C - 2, 10, 7);
+        const red = emptyGrid();
+        drawBeam(red, dish.x + 1, dish.y, 88, 3);
+        overlaySprite(red, EXP_SMALL, HOLD_A, ROW_A);
+        overlaySprite(red, EXP_SMALL, HOLD_B, ROW_B);
+        overlaySprite(red, EXP_SMALL, HOLD_C, ROW_C);
+        frames.push([130, gridToString(mono), gridToString(emptyGrid()), gridToString(red), { shake: true }]);
+      }
+      {
+        // Frame: beam continues, explosions peak (medium)
+        const mono = starfieldCopy();
+        overlaySprite(mono, dsLargeWithGlow("@"), DS_X, DS_Y);
+        eraseRect(mono, HOLD_A - 3, ROW_A - 2, 12, 7);
+        eraseRect(mono, HOLD_B - 3, ROW_B - 2, 12, 7);
+        eraseRect(mono, HOLD_C - 3, ROW_C - 2, 12, 7);
+        const red = emptyGrid();
+        drawBeam(red, dish.x + 1, dish.y, 88, 3);
+        overlaySprite(red, EXP_MED, HOLD_A - 1, ROW_A - 1);
+        overlaySprite(red, EXP_MED, HOLD_B - 1, ROW_B - 1);
+        overlaySprite(red, EXP_MED, HOLD_C - 1, ROW_C - 1);
+        frames.push([150, gridToString(mono), gridToString(emptyGrid()), gridToString(red), { shake: true }]);
+      }
+
+      // ---- Phase 6: Beam fades, explosions large then dissipate ----
+      {
+        // Frame: beam thinning, big explosions
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
+        eraseRect(mono, HOLD_A - 4, ROW_A - 2, 14, 7);
+        eraseRect(mono, HOLD_B - 4, ROW_B - 2, 14, 7);
+        eraseRect(mono, HOLD_C - 4, ROW_C - 2, 14, 7);
+        const red = emptyGrid();
+        drawBeam(red, dish.x + 1, dish.y, 88, 1);
+        overlaySprite(red, EXP_LARGE, HOLD_A - 3, ROW_A - 1);
+        overlaySprite(red, EXP_LARGE, HOLD_B - 3, ROW_B - 1);
+        overlaySprite(red, EXP_LARGE, HOLD_C - 3, ROW_C - 1);
+        frames.push([200, gridToString(mono), gridToString(emptyGrid()), gridToString(red), {}]);
+      }
+      {
+        // Frame: beam gone, explosions fading
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
+        const red = emptyGrid();
+        overlaySprite(red, EXP_MED, HOLD_A - 1, ROW_A - 1);
+        overlaySprite(red, EXP_MED, HOLD_B - 1, ROW_B - 1);
+        overlaySprite(red, EXP_MED, HOLD_C - 1, ROW_C - 1);
+        frames.push([280, gridToString(mono), gridToString(emptyGrid()), gridToString(red), {}]);
+      }
+      {
+        // Frame: only small bursts left
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
+        const red = emptyGrid();
+        overlaySprite(red, EXP_SMALL, HOLD_A, ROW_A);
+        overlaySprite(red, EXP_SMALL, HOLD_B, ROW_B);
+        overlaySprite(red, EXP_SMALL, HOLD_C, ROW_C);
+        frames.push([320, gridToString(mono), gridToString(emptyGrid()), gridToString(red), {}]);
+      }
+
+      // ---- Phase 7: Debris drift ----
+      const debrisSeeds = [];
+      for (const [cx, cy] of [[HOLD_A + 2, ROW_A + 1], [HOLD_B + 2, ROW_B + 1], [HOLD_C + 2, ROW_C + 1]]) {
+        for (let k = 0; k < 8; k++) {
+          const dx = ((k * 13) % 9) - 4;
+          const dy = ((k * 7) % 5) - 2;
+          debrisSeeds.push([cx + dx, cy + dy]);
+        }
+      }
+
+      for (let step = 0; step < 4; step++) {
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_LARGE, DS_X, DS_Y);
+        // Debris drifts slightly right and dims over time
+        for (const [sx, sy] of debrisSeeds) {
+          const x = sx + step;
+          const y = sy;
+          const age = step + 1;
+          if (x >= 0 && x < W && y >= 0 && y < H) {
+            const chars = [".", "'", ",", "`", " "];
+            const ch = chars[Math.min(age, chars.length - 1)];
+            if (ch !== " ") mono[y][x] = ch;
+          }
+        }
+        frames.push([500, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
+      }
+
+      // ---- Phase 8: DS recedes ----
+      {
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_MED, 8, 11);
+        frames.push([900, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
+      }
+      {
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_SMALL, 18, 13);
+        frames.push([1000, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
+      }
+      {
+        const mono = starfieldCopy();
+        overlaySprite(mono, DS_TINY, 26, 14);
+        frames.push([1100, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
+      }
+      {
+        const mono = starfieldCopy();
+        frames.push([1600, gridToString(mono), gridToString(emptyGrid()), gridToString(emptyGrid()), {}]);
+      }
+
+      return frames;
+    }
+
+    // -- Player ------------------------------------------------------------
+    const FRAMES = buildFrames();
+    const monoEl = document.getElementById("mono");
+    const yellowEl = document.getElementById("yellow");
+    const redEl = document.getElementById("red");
+    const stageEl = document.getElementById("stage");
+
+    let playing = false;
+    async function play() {
+      if (playing) return;
+      playing = true;
+      for (const [delay, monoStr, yellowStr, redStr, flags] of FRAMES) {
+        monoEl.textContent = monoStr;
+        yellowEl.textContent = yellowStr;
+        redEl.textContent = redStr;
+        stageEl.classList.toggle("shake", !!flags.shake);
+        stageEl.classList.toggle("flash", !!flags.flash);
+        stageEl.classList.toggle("blackout", !!flags.blackout);
+        await new Promise(r => setTimeout(r, delay));
+      }
+      stageEl.classList.remove("shake", "flash", "blackout");
+      playing = false;
+    }
+
+    document.getElementById("replay").addEventListener("click", play);
+    play();
+  </script>
+</body>
+</html>
